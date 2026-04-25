@@ -65,8 +65,8 @@
 #define ADDR_ttsGlobal 0x008f7c64
 //#define ADDR_newTtsGlobal 0x0
 //#define ADDR_setupTtsGlobal 0x0
-#define ADDR_setupFunc 0x0021c6cc
-#define ADDR_set_tts_text 0x00606338 // this is not exclusive to the JP rom, but it's the easiest place i found to inject custom text
+#define ADDR_setupFunc 0x0021c730
+#define ADDR_set_tts_text 0x0021c7f4 // this is not exclusive to the JP rom, but it's the easiest place i found to inject custom text
 #define ADDR_doTTS 0x0021c6cc
 #define ADDR_msbtToText 0x0
 #define ADDR_textToEffects 0x0
@@ -100,10 +100,10 @@ static setupTtsGlobal* setupTtsGlobalFunc = (setupTtsGlobal*)ADDR_setupTtsGlobal
 #ifndef REGION_JP
 typedef uint doTTS(int *param_1,int param_2,ttsInput *param_3);
 #else
-typedef uint doTTS(void *ttsGlobal);
-typedef uint setTtsText(void *ttsGlobal,short* utf16text);
+typedef uint doTTS(ttsGlobal *ttsGlobal);
+typedef uint setTtsText(ttsGlobal *ttsGlobal,uint16_t* utf16text);
 
-static doTTS* setTtsTextFunc = (doTTS*)ADDR_set_tts_text;
+static setTtsText* setTtsTextFunc = (setTtsText*)ADDR_set_tts_text;
 #endif
 static doTTS* ttsFunc = (doTTS*)ADDR_doTTS;
 

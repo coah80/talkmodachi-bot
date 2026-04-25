@@ -2,7 +2,7 @@
 #define undefined char
 typedef unsigned char    byte;
 
-#define PADDING(start,end) char padding_##start[(end)-(start)]
+#define PADDING(start,end) char padding_##start[(end+0x1)-(start)]
 
 typedef struct {
     PADDING(0x0,0x3217);
@@ -15,6 +15,7 @@ typedef struct {
     audioEffectsParams *effects;
 } ttsClass; // ingame size: 0x6a10
 
+#ifndef REGION_JP
 struct ttsGlobal_vtable {
     void (*free_ttsClass)(void *); // ttsGlobal*
     void *field1_0x4;
@@ -33,6 +34,20 @@ typedef struct {
     undefined field12_0xf;
     int field13_0x10;
 } ttsGlobal; // ingame size: 0x14
+#else
+typedef struct {
+    PADDING(0x0,0x95);
+    bool isBusy;
+    PADDING(0x97,0x9f);
+    int unknown;
+    uint16_t converted_text;
+} ttsData; // ingame size: 0xbc
+
+typedef struct {
+    void* vtable;
+    ttsData* data;
+} ttsGlobal; // ingame size: 0x10
+#endif
 
 typedef struct {
     int effectCodes[131];
