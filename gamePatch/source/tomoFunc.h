@@ -41,7 +41,25 @@
 #define ADDR_repairSingingParams 0x007457b8
 #define ADDR_RESET_TTS 0x001be0d0
 #elif REGION_KR
-
+#define ADDR_unknown_ptr 0x00aef67c
+#define ADDR_ttsGlobal 0x00aef624
+//#define ADDR_newTtsGlobal 0x0
+//#define ADDR_setupTtsGlobal 0x0
+#define ADDR_setupFunc 0x003915e0
+#define ADDR_doTTS 0x00191f2c
+#define ADDR_msbtToText 0x003d3a08
+#define ADDR_textToEffects 0x00746f74
+#define ADDR_generateMrk 0x007439d8
+#define ADDR_getIsMouthOpenAtSampleTime 0x007467d8
+#define ADDR_setVoicePitch 0x003913f4
+#define ADDR_setVoiceSpeed 0x00391404
+#define ADDR_setVoiceQuality 0x003913e4
+#define ADDR_setVoiceTone 0x00391434
+#define ADDR_setVoiceAccent 0x00391414
+#define ADDR_setVoiceIntonation 0x00391424
+#define ADDR_setupSingingParams 0x00743b64
+#define ADDR_repairSingingParams 0x007478e8
+#define ADDR_RESET_TTS 0x001be254
 #endif
 
 typedef struct {
