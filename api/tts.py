@@ -19,7 +19,7 @@ Status codes:
 
 # Lazy way to store data the game needs; these memory addresses aren't used by the game (hopefully)
 audioRenderJobAddr=0x00af340d
-textDataAddr=audioRenderJobAddr+0xB27DAA
+textDataAddr=audioRenderJobAddr+0x3499D
 
 audioRenderJobAddrJP=0x0090a27a
 textDataAddrJP=audioRenderJobAddrJP+0x258

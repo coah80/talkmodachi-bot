@@ -28,7 +28,7 @@ typedef struct{
 
 #ifndef REGION_JP
 	#define audioRenderJobLoc 0x00af340d // other unused memory location
-	#define textDataLoc (audioRenderJobLoc+0xB27DAA) // random unused (hopefully) memory location
+	#define textDataLoc (audioRenderJobLoc+0x3499D) // random unused (hopefully) memory location
 #else
 	#define audioRenderJobLoc 0x0090a27a // other unused memory location
 	#define textDataLoc (audioRenderJobLoc+0x258) // random unused (hopefully) memory location
