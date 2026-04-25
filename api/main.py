@@ -48,7 +48,15 @@ def sing():
     try:
         langId = langToId(lang)
         if __name__ != '__main__':
-            romName = 'US' if lang == 'useng' else 'EU'
+            match data['lang']:
+                case 'useng':
+                    romName = 'US'
+                #case 'jp':
+                #    romName = "JP"
+                case 'kr':
+                    romName = "KR"
+                case _:
+                    romName = "EU"
             
             tts.startEmulator(romName,langId)
 
