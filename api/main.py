@@ -41,14 +41,13 @@ def sing():
     tone = int(request.args.get('tone', 50))
     accent = int(request.args.get('accent', 50))
     intonation = int(request.args.get('intonation', 1))
-    lang = request.args.get('lang', 'useng')
-
+    lang=data.get('lang','useng')
     data = newSongConverter.convertSongToTTS(data)
 
     try:
         langId = langToId(lang)
         if __name__ != '__main__':
-            match data['lang']:
+            match lang:
                 case 'useng':
                     romName = 'US'
                 #case 'jp':
