@@ -22,6 +22,7 @@ class Citra:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.settimeout(1)
         self.address = address
+        self.port = port
 
     def is_connected(self):
         return self.socket is not None
@@ -50,7 +51,7 @@ class Citra:
             request_data = struct.pack("II", read_address, temp_read_size)
             request, request_id = self._generate_header(RequestType.ReadMemory, len(request_data))
             request += request_data
-            self.socket.sendto(request, (self.address, CITRA_PORT))
+            self.socket.sendto(request, (self.address, self.port))
 
             raw_reply = self.socket.recv(MAX_PACKET_SIZE)
             reply_data = self._read_and_validate_header(raw_reply, request_id, RequestType.ReadMemory)
@@ -82,7 +83,7 @@ class Citra:
             request_data += write_contents[:temp_write_size]
             request, request_id = self._generate_header(RequestType.WriteMemory, len(request_data))
             request += request_data
-            self.socket.sendto(request, (self.address, CITRA_PORT))
+            self.socket.sendto(request, (self.address, self.port))
 
             raw_reply = self.socket.recv(MAX_PACKET_SIZE)
             reply_data = self._read_and_validate_header(raw_reply, request_id, RequestType.WriteMemory)

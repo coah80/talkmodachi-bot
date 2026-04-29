@@ -1,14 +1,50 @@
-version: '3.8'
-
 services:
-  api:
+  tts-worker:
     build:
-      context: ./api
-    ports:
-      - "80:5000"
-    restart: "unless-stopped"
+      context: .
+    command: python -m talkmodachi_bot.renderer_service
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      RENDERER_HOST: 0.0.0.0
+      RENDERER_PORT: 8080
+      TALKMODACHI_CACHE_DIR: /cache
+      TALKMODACHI_WORKER_ROMS: ${TALKMODACHI_WORKER_ROMS:-US}
+      TALKMODACHI_US_WORKERS: ${TALKMODACHI_US_WORKERS:-1}
+      TALKMODACHI_POLL_INTERVAL: ${TALKMODACHI_POLL_INTERVAL:-0.01}
+      TALKMODACHI_MAX_INFLIGHT_RENDERS: ${TALKMODACHI_MAX_INFLIGHT_RENDERS:-32}
+      CITRA_MAX_RUNTIME_SECONDS: "0"
+      SDL_AUDIODRIVER: dummy
+      SDL_VIDEODRIVER: dummy
     volumes:
-      - ./US_patched.cxi:/opt/US.cxi
-      - ./EU_patched.cxi:/opt/EU.cxi
-      - ./KR_patched.cxi:/opt/KR.cxi
-      - ./JP_patched.cxi:/opt/JP.cxi
+      - ./roms:/opt:ro
+      - renderer-cache:/cache
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  bot:
+    build:
+      context: .
+    command: python -m talkmodachi_bot.discord_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_PATH: /data/talkmodachi.sqlite3
+      RENDERER_URL: http://tts-worker:8080
+      SYNC_COMMANDS_ON_START: ${SYNC_COMMANDS_ON_START:-true}
+    volumes:
+      - bot-data:/data
+    depends_on:
+      - tts-worker
+
+volumes:
+  bot-data:
+  renderer-cache:

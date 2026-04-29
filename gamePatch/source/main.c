@@ -251,6 +251,8 @@ void mainLoopF(){
 				#endif
 			}
 			tfree(text);
+		}else{
+			svcSleepThread(1000000);
 		}
 	}
 }
@@ -267,8 +269,11 @@ int audioDataGet(char* inData,int audioDataLen){
 	}
 
 	if (audioJob->audioSize+audioDataLen > audioJob->allocatedSize){
-		audioJob->allocatedSize = audioJob->audioSize+audioDataLen;
-		audioJob->audioData = (char*)trealloc(audioJob->audioData,audioJob->allocatedSize);
+		int oldSize = audioJob->allocatedSize;
+		while (audioJob->audioSize+audioDataLen > audioJob->allocatedSize){
+			audioJob->allocatedSize *= 2;
+		}
+		audioJob->audioData = (char*)trealloc(audioJob->audioData,oldSize,audioJob->allocatedSize);
 	}
 
 	memcpy(audioJob->audioData+audioJob->audioSize,inData,audioDataLen);

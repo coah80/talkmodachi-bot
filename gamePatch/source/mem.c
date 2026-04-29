@@ -24,10 +24,10 @@ void tfree(void* ptr){
     ((void(*)(void*))FREE_ADDR)(ptr);
 }
 
-void* trealloc(void* ptr, int size){
+void* trealloc(void* ptr, int oldSize, int newSize){
     // no address for this one, so we have to implement it ourselves
-    void* newPtr = tmalloc(size);
-    memcpy(newPtr, ptr, size);
+    void* newPtr = tmalloc(newSize);
+    memcpy(newPtr, ptr, oldSize);
     tfree(ptr);
     return newPtr;
 }

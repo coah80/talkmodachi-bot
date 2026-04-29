@@ -3,11 +3,12 @@ import time
 import utils
 
 emu = citra.Citra()
-from pydub import AudioSegment
 import songConverter
 import struct
 import subprocess
 import os
+import io
+import wave
 '''
 Status codes:
 1 - Emulator is waiting for text
@@ -74,12 +75,15 @@ def calcFileLength(bytes):
 def waitForStatus(stat, timeout=15,setLanguage=None):
     current=-1
     start_time = time.time()
+    poll_interval = float(os.environ.get("TALKMODACHI_POLL_INTERVAL", "0.01"))
+    language_set = False
     while current != stat:
-        if setLanguage is not None:
+        if setLanguage is not None and not language_set:
             job = readJob()
             job["language"] = setLanguage
             writeJobRaw(job)
-        time.sleep(0.1)
+            language_set = True
+        time.sleep(poll_interval)
         current = emu.read_memory(getJobAddr(),1)[0]
         if time.time() - start_time > timeout:
             raise TimeoutError(f"Timed out waiting for status {stat}")
@@ -92,14 +96,18 @@ def startEmulator(romname='US',setLanguage=None):
     global emulatorProcess
     global currentRom
     setRom(romname)
-    # create /tmp/user directory if it doesn't exist
-    if not os.path.exists("/tmp/user"):
-        os.makedirs("/tmp/user/config")
-        with open("/config/sdl2-config.ini", "rb") as f:
-            with open("/tmp/user/config/sdl2-config.ini", "wb") as f2:
-                f2.write(f.read())
+    work_dir = os.environ.get("CITRA_WORK_DIR", f"/tmp/talkmodachi-{citra.CITRA_PORT}")
+    config_dir = os.path.join(work_dir, "user", "config")
+    os.makedirs(config_dir, exist_ok=True)
+    with open("/config/sdl2-config.ini", "rb") as f:
+        with open(os.path.join(config_dir, "sdl2-config.ini"), "wb") as f2:
+            f2.write(f.read())
 
-    emulatorProcess = subprocess.Popen(["timeout","60s",'citra', f'/opt/{romname}.cxi', '-u',str(citra.CITRA_PORT)],cwd="/tmp")
+    max_runtime = int(os.environ.get("CITRA_MAX_RUNTIME_SECONDS", "0"))
+    command = ['citra', f'/opt/{romname}.cxi', '-u',str(citra.CITRA_PORT)]
+    if max_runtime > 0:
+        command = ["timeout", f"{max_runtime}s"] + command
+    emulatorProcess = subprocess.Popen(command,cwd=work_dir)
     connected = False
     while not connected:
         try:
@@ -154,14 +162,13 @@ def convertDataToMp3(data):
     sRate = 16000
     if currentRom == "JP":
         sRate = 0x58EF
-    # convert the data to wav
-    # signed 16 bit PCM, 16000 Hz, mono -> wav
-    audio = AudioSegment(data, sample_width=2, frame_rate=sRate, channels=1)
-    #return wav bytes
-
-    data = audio.export(format="wav").read() # TODO: mp3?
-
-    return data
+    out = io.BytesIO()
+    with wave.open(out, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sRate)
+        wav.writeframes(data)
+    return out.getvalue()
 
 def readDebugData():
     debugLoc = 0x004110f0
@@ -180,7 +187,7 @@ def readRenderedAudio(timeout=15, chunk_size=citra.MAX_REQUEST_DATA_SIZE):
     
     total_size = job["audioSize"]
     address = job["audioData"]
-    data = b""
+    data = bytearray(total_size)
     bytes_read = 0
     
     while bytes_read < total_size:
@@ -191,11 +198,10 @@ def readRenderedAudio(timeout=15, chunk_size=citra.MAX_REQUEST_DATA_SIZE):
         current_chunk_size = min(chunk_size, remaining)
         
         chunk = emu.read_memory(address + bytes_read, current_chunk_size)
-        
-        data += chunk
+        data[bytes_read:bytes_read + len(chunk)] = chunk
         bytes_read += len(chunk)
     
-    return data
+    return bytes(data)
 
 def singText(text,pitch=50,speed=50,quality=50,tone=50,accent=50,intonation=0,language=1):
     lyrics = songConverter.parseSong(text)

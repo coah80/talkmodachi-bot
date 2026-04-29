@@ -1,5 +1,9 @@
 .wrangler
 node_modules
+__pycache__
+.env
+data
+cache
 *.cxi
 *.exe
 gamePatch/source/main.hks

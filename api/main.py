@@ -6,7 +6,7 @@ import newSongConverter
 import pykakasi
 
 if __name__ != '__main__':
-    citra.CITRA_PORT = utils.findFreePort()
+    citra.CITRA_PORT = utils.findFreeUdpPort()
 
 import tts
 
