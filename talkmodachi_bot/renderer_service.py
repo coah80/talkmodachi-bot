@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
+from .audio import amplify_wav
+from .panel import PANEL_HTML
 from .renderer_pool import RenderPayload, RendererPool
-from .voices import VoiceParams, cache_key
+from .voices import BUILTIN_VOICES, LANG_TO_ID, VoiceParams, cache_key
 
 
 class RenderRequest(BaseModel):
@@ -28,6 +31,13 @@ inflight_lock = asyncio.Lock()
 inflight_tasks: dict[str, asyncio.Task[dict[str, object]]] = {}
 render_semaphore: asyncio.Semaphore | None = None
 max_inflight_renders = int(os.environ.get("TALKMODACHI_MAX_INFLIGHT_RENDERS", "32"))
+cache_max_bytes = int(os.environ.get("TALKMODACHI_CACHE_MAX_BYTES", str(1024 * 1024 * 1024)))
+panel_token = os.environ.get("TALKMODACHI_PANEL_TOKEN")
+public_hosts = {
+    host.strip().lower()
+    for host in os.environ.get("TALKMODACHI_PUBLIC_HOSTS", "").split(",")
+    if host.strip()
+}
 
 
 @app.on_event("startup")
@@ -50,20 +60,37 @@ def health() -> dict[str, object]:
     return {"ok": True, "cache_dir": str(cache_dir), "pool": pool.health() if pool else None}
 
 
+@app.get("/", response_class=HTMLResponse)
+async def panel() -> HTMLResponse:
+    return HTMLResponse(PANEL_HTML)
+
+
+@app.get("/api/config")
+async def config(request: Request) -> dict[str, object]:
+    require_panel_token(request)
+    return {
+        "builtins": {name: voice.to_dict() for name, voice in BUILTIN_VOICES.items()},
+        "languages": sorted(LANG_TO_ID),
+        "defaultMessage": "This is a test message for the discord bot.",
+        "maxSafeSamples": 48,
+    }
+
+
 @app.post("/render")
-async def render(request: RenderRequest) -> Response:
+async def render(request: Request, payload: RenderRequest) -> Response:
+    require_panel_token(request)
     if pool is None:
         raise HTTPException(status_code=503, detail="Renderer pool is not ready")
     try:
-        voice = VoiceParams.from_mapping(request.voice)
+        voice = VoiceParams.from_mapping(payload.voice)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
-    text = request.text.replace("\n", " ").strip()
+    text = payload.text.replace("\n", " ").strip()
     if len(text) > voice.text_limit():
         raise HTTPException(status_code=400, detail=f"Text is longer than {voice.text_limit()} characters")
 
-    key = cache_key(text, voice, request.mode, engine_version)
+    key = cache_key(text, voice, payload.mode, engine_version)
     cache_path = cache_dir / f"{key}.wav"
     if cache_path.exists():
         return FileResponse(cache_path, media_type="audio/wav", filename="speech.wav", headers={"X-Cache": "HIT"})
@@ -74,7 +101,7 @@ async def render(request: RenderRequest) -> Response:
         if task is None:
             if len(inflight_tasks) >= max_inflight_renders:
                 raise HTTPException(status_code=429, detail="Renderer queue is full")
-            task = asyncio.create_task(_render_to_cache(cache_path, text, voice, request.mode))
+            task = asyncio.create_task(_render_to_cache(cache_path, text, voice, payload.mode))
             inflight_tasks[key] = task
             created = True
 
@@ -109,12 +136,53 @@ async def _render_to_cache(cache_path: Path, text: str, voice: VoiceParams, mode
         if cache_path.exists():
             return {"cache": "HIT", "elapsed_ms": ""}
         result = await asyncio.to_thread(pool.render, RenderPayload(text=text, voice=voice, mode=mode))
-        audio = result["audio"]
+        audio = amplify_wav(result["audio"], voice.volume)
         with NamedTemporaryFile(dir=cache_dir, delete=False) as temp:
             temp.write(audio)
             temp_path = Path(temp.name)
         temp_path.replace(cache_path)
+        prune_cache()
         return {"cache": "MISS", "elapsed_ms": result.get("elapsed_ms", "")}
+
+
+def prune_cache() -> None:
+    if cache_max_bytes <= 0:
+        return
+
+    entries: list[tuple[float, int, Path]] = []
+    total = 0
+    for path in cache_dir.glob("*.wav"):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        total += stat.st_size
+        entries.append((stat.st_mtime, stat.st_size, path))
+
+    if total <= cache_max_bytes:
+        return
+
+    for _, size, path in sorted(entries):
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        total -= size
+        if total <= cache_max_bytes:
+            return
+
+
+def require_panel_token(request: Request) -> None:
+    if not panel_token or not is_public_request(request):
+        return
+    request_token = request.headers.get("x-panel-token") or request.query_params.get("token") or ""
+    if not hmac.compare_digest(request_token, panel_token):
+        raise HTTPException(status_code=401, detail="Panel token required")
+
+
+def is_public_request(request: Request) -> bool:
+    host = request.headers.get("host", "").split(":", 1)[0].lower()
+    return bool(host and host in public_hosts)
 
 
 def main() -> None:

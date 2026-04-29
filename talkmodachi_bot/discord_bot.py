@@ -450,7 +450,11 @@ def register_commands(bot: TalkmodachiBot) -> None:
 
     bot.tree.add_command(replace_group)
 
-    voice_group = app_commands.Group(name="voice", description="Manage Talkmodachi voices.")
+    voice_group = app_commands.Group(name="voice", description="customize the voice at tomo.coah80.com!")
+
+    @voice_group.command(name="panel", description="customize the voice at tomo.coah80.com!")
+    async def voice_panel(interaction: discord.Interaction) -> None:
+        await interaction.response.send_message("customize the voice at tomo.coah80.com!", ephemeral=True)
 
     @voice_group.command(name="list", description="List available voices.")
     async def voice_list(interaction: discord.Interaction) -> None:
@@ -506,9 +510,19 @@ def register_commands(bot: TalkmodachiBot) -> None:
         accent: app_commands.Range[int, 0, 100] = 50,
         intonation: app_commands.Range[int, 1, 4] = 1,
         lang: str = "useng",
+        volume: app_commands.Range[int, 25, 300] = 165,
     ) -> None:
         assert interaction.guild is not None
-        voice = VoiceParams(pitch=pitch, speed=speed, quality=quality, tone=tone, accent=accent, intonation=intonation, lang=lang)
+        voice = VoiceParams(
+            pitch=pitch,
+            speed=speed,
+            quality=quality,
+            tone=tone,
+            accent=accent,
+            intonation=intonation,
+            lang=lang,
+            volume=volume,
+        )
         voice.validate()
         voice_id = normalize_voice_id(name) or "voice"
         bot.storage.save_voice(

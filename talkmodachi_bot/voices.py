@@ -43,6 +43,7 @@ class VoiceParams:
     accent: int = 50
     intonation: int = 1
     lang: str = "useng"
+    volume: int = 165
 
     @classmethod
     def from_mapping(cls, values: dict[str, Any] | None) -> "VoiceParams":
@@ -55,6 +56,7 @@ class VoiceParams:
             accent=int(values.get("accent", 50)),
             intonation=int(values.get("intonation", 1)),
             lang=str(values.get("lang", "useng")),
+            volume=int(values.get("volume", 165)),
         )
         voice.validate()
         return voice
@@ -70,6 +72,8 @@ class VoiceParams:
         invalid = [name for name, value in numeric_values.items() if not 0 <= value <= 100]
         if invalid:
             raise ValueError(f"Voice parameter out of range: {', '.join(invalid)}")
+        if not 25 <= self.volume <= 300:
+            raise ValueError("Volume must be between 25 and 300")
         if self.intonation not in {1, 2, 3, 4}:
             raise ValueError("Intonation must be 1, 2, 3, or 4")
         if self.lang not in LANG_TO_ID:
@@ -99,6 +103,7 @@ class VoiceParams:
             str(self.tone),
             str(self.accent),
             str(self.intonation),
+            str(self.volume),
         )
         return ":".join(parts)
 
@@ -116,4 +121,3 @@ BUILTIN_VOICES: dict[str, VoiceParams] = {
 def cache_key(text: str, voice: VoiceParams, mode: str, engine_version: str) -> str:
     payload = "\0".join([engine_version, mode, text, voice.cache_fragment()])
     return sha256(payload.encode("utf-8")).hexdigest()
-

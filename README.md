@@ -10,6 +10,8 @@ This fork keeps the original Talkmodachi engine work and turns it into a server 
 - Warm renderer service instead of per-request Citra startup.
 - File cache keyed by text, voice params, language, mode, and engine version, with duplicate in-flight renders collapsed.
 - SQLite storage for guild settings and user/guild voice presets.
+- Louder WAV output through a cached per-voice volume parameter.
+- Renderer-hosted voice panel with sliders, built-in presets, test playback, and bounded sample-pack generation.
 - Isolated warm Citra workers with fixed UDP ports, native-resolution software rendering, dummy SDL audio/video, timeout restart, and lower idle CPU in the game patch wait loop.
 - Direct WAV wrapping for raw PCM instead of `pydub`.
 
@@ -20,6 +22,12 @@ This fork keeps the original Talkmodachi engine work and turns it into a server 
 3. Run `docker compose up --build`.
 
 The renderer exposes health on the host at `http://127.0.0.1:18080/health` by default. Override `RENDERER_HOST_PORT` if that port is already in use.
+
+## Voice Panel
+
+The renderer serves a voice panel at `/`. Set `TALKMODACHI_PUBLIC_HOSTS=tomo.coah80.com` when exposing it publicly. Add `TALKMODACHI_PANEL_TOKEN` if you want public `/render` and `/api/config` requests locked down while internal Docker calls from the Discord bot stay token-free.
+
+The panel includes sliders for `pitch`, `speed`, `quality`, `tone`, `accent`, `intonation`, `lang`, and `volume`. The sample-pack button renders a capped preset/matrix set, and `TALKMODACHI_CACHE_MAX_BYTES` bounds the WAV cache.
 
 ## Commands
 
@@ -35,7 +43,7 @@ The renderer exposes health on the host at `http://127.0.0.1:18080/health` by de
 - `/set nickname` changes the spoken name used for a user.
 - `/replace add/remove/list/clear` manages server pronunciation replacements before TTS.
 - `/voice list` lists built-in and saved voices.
-- `/voice save` saves a custom voice from Talkmodachi parameters.
+- `/voice save` saves a custom voice from Talkmodachi parameters, including volume.
 - `/voice use` selects your voice.
 - `/voice default` sets the server default.
 - `/voice current` shows your selected voice.
