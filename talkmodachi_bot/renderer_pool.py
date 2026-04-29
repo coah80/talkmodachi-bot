@@ -52,6 +52,9 @@ def _worker_loop(spec: WorkerSpec, inbox: mp.Queue, outbox: mp.Queue) -> None:
     citra.CITRA_PORT = spec.port
     import tts  # type: ignore
 
+    tts.citra.CITRA_PORT = spec.port
+    tts.emu = citra.Citra(port=spec.port)
+
     try:
         tts.startEmulator(spec.rom, spec.lang_id)
         outbox.put({"type": "ready", "worker": spec.name})

@@ -109,9 +109,15 @@ def startEmulator(romname='US',setLanguage=None):
         command = ["timeout", f"{max_runtime}s"] + command
     emulatorProcess = subprocess.Popen(command,cwd=work_dir)
     connected = False
+    start_time = time.time()
+    startup_timeout = float(os.environ.get("CITRA_STARTUP_TIMEOUT", "90"))
     while not connected:
+        if emulatorProcess.poll() is not None:
+            raise RuntimeError(f"Citra exited before renderer connected with code {emulatorProcess.returncode}")
+        if time.time() - start_time > startup_timeout:
+            raise TimeoutError(f"Timed out waiting for Citra renderer on UDP port {citra.CITRA_PORT}")
         try:
-            waitForStatus(1,setLanguage=setLanguage)
+            waitForStatus(1,timeout=min(5, startup_timeout),setLanguage=setLanguage)
             connected = True
         except TimeoutError:
             pass
