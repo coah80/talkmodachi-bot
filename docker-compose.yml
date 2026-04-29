@@ -21,7 +21,7 @@ services:
       - ./roms:/opt:ro
       - renderer-cache:/cache
     ports:
-      - "127.0.0.1:8080:8080"
+      - "${RENDERER_BIND:-127.0.0.1}:${RENDERER_HOST_PORT:-18080}:8080"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).read()"]
       interval: 30s

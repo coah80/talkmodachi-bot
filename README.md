@@ -19,7 +19,7 @@ This fork keeps the original Talkmodachi engine work and turns it into a server 
 2. Put patched ROMs in `roms/`, starting with `roms/US.cxi`.
 3. Run `docker compose up --build`.
 
-The renderer exposes health at `http://127.0.0.1:8080/health`.
+The renderer exposes health on the host at `http://127.0.0.1:18080/health` by default. Override `RENDERER_HOST_PORT` if that port is already in use.
 
 ## Commands
 
