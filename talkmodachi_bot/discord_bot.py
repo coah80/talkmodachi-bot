@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import random
 import tempfile
@@ -13,6 +14,9 @@ from .message_cleaner import clean_message
 from .render_client import RendererClient
 from .storage import Storage
 from .voices import BUILTIN_VOICES, VoiceParams
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -72,6 +76,7 @@ class GuildPlayer:
                     path = Path(file.name)
                 await self._play_file(path)
             except Exception as error:
+                LOGGER.exception("TTS playback job failed")
                 if reply_to is not None:
                     await reply_to.send(f"TTS failed: {error}", delete_after=10)
             finally:
@@ -82,12 +87,16 @@ class GuildPlayer:
 
         def after(error: Exception | None) -> None:
             if error:
-                print(f"Discord playback failed: {error}")
+                LOGGER.warning("Discord playback failed", exc_info=error)
             self.bot.loop.call_soon_threadsafe(done.set)
 
         source = discord.FFmpegPCMAudio(str(path))
         assert self.voice_client is not None
-        self.voice_client.play(source, after=after)
+        try:
+            self.voice_client.play(source, after=after)
+        except Exception:
+            source.cleanup()
+            raise
         await done.wait()
         path.unlink(missing_ok=True)
 
@@ -296,8 +305,30 @@ def main() -> None:
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
         raise SystemExit("DISCORD_TOKEN is required")
+    load_opus()
     bot = TalkmodachiBot()
     bot.run(token)
+
+
+def load_opus() -> None:
+    if discord.opus.is_loaded():
+        return
+    candidates = [
+        os.environ.get("DISCORD_OPUS_LIBRARY"),
+        "libopus.so.0",
+        "libopus.so",
+        "/usr/lib/libopus.so.0",
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            discord.opus.load_opus(candidate)
+        except OSError:
+            continue
+        if discord.opus.is_loaded():
+            return
+    raise RuntimeError("Discord opus library could not be loaded")
 
 
 if __name__ == "__main__":
