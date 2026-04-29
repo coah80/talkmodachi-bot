@@ -26,6 +26,40 @@ def env_bool(name: str, default: bool) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
+def format_bool(value: bool) -> str:
+    return "on" if value else "off"
+
+
+def normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    if not value or value.lower() in {"none", "null", "off", "reset"}:
+        return None
+    return value
+
+
+def normalize_prefix(value: str | None) -> str | None:
+    value = normalize_optional_text(value)
+    if value is None:
+        return None
+    if len(value) > 5 or value.count(" ") > 1:
+        raise ValueError("Use 5 or fewer characters with at most one space.")
+    return value
+
+
+def normalize_voice_id(name: str) -> str:
+    return "-".join(name.lower().split())[:32]
+
+
+def bot_name_for_message(storage: Storage, message: discord.Message) -> str:
+    assert message.guild is not None
+    nickname = storage.get_nickname(message.guild.id, message.author.id)
+    if nickname:
+        return nickname
+    return message.author.display_name
+
+
 class GuildPlayer:
     def __init__(self, bot: "TalkmodachiBot", guild_id: int) -> None:
         self.bot = bot
@@ -144,7 +178,7 @@ class TalkmodachiBot(discord.Client):
         if settings.ignore_bots and message.author.bot:
             return
 
-        author_vc = message.author.voice.channel if message.author.voice else None
+        author_vc = message.author.voice.channel if isinstance(message.author, discord.Member) and message.author.voice else None
         in_setup_channel = settings.setup_channel_id == message.channel.id
         in_text_voice = bool(
             settings.text_in_voice
@@ -153,7 +187,7 @@ class TalkmodachiBot(discord.Client):
         )
         if not in_setup_channel and not in_text_voice:
             return
-        if message.content.startswith(("/", "!", "-", ".")):
+        if settings.required_prefix is None and message.content.startswith(("/", "!", "-", ".")):
             return
         if settings.required_role_id and isinstance(message.author, discord.Member):
             if settings.required_role_id not in {role.id for role in message.author.roles}:
@@ -174,8 +208,14 @@ class TalkmodachiBot(discord.Client):
             message.content,
             attachments=[attachment.filename for attachment in message.attachments],
             skip_emoji=settings.skip_emoji,
+            repeated_chars=settings.repeated_characters,
             required_prefix=settings.required_prefix,
-            announce_name=message.author.display_name if settings.announce_name else None,
+            announce_name=(
+                bot_name_for_message(self.storage, message)
+                if settings.announce_name
+                else None
+            ),
+            replacements=self.storage.list_replacements(message.guild.id),
         )
         if not text:
             return
@@ -223,19 +263,192 @@ def register_commands(bot: TalkmodachiBot) -> None:
         assert interaction.guild is not None
         row = bot.storage.get_guild_settings(interaction.guild.id)
         setup_channel = f"<#{row.setup_channel_id}>" if row.setup_channel_id else "not set"
+        required_role = f"<@&{row.required_role_id}>" if row.required_role_id else "none"
+        required_prefix = row.required_prefix if row.required_prefix else "none"
+        replacements = len(bot.storage.list_replacements(interaction.guild.id))
         await interaction.response.send_message(
             "\n".join(
                 [
                     f"Setup channel: {setup_channel}",
-                    f"Autojoin: {row.autojoin}",
-                    f"Require same VC: {row.require_same_vc}",
-                    f"Text-in-voice: {row.text_in_voice}",
+                    f"Autojoin: {format_bool(row.autojoin)}",
+                    f"Require same VC: {format_bool(row.require_same_vc)}",
+                    f"Ignore bots: {format_bool(row.ignore_bots)}",
+                    f"Text-in-voice: {format_bool(row.text_in_voice)}",
+                    f"Say names: {format_bool(row.announce_name)}",
+                    f"Say emoji: {format_bool(not row.skip_emoji)}",
+                    f"Required prefix: {required_prefix}",
+                    f"Required role: {required_role}",
                     f"Default voice: {row.default_voice_id}",
                     f"Max message length: {row.max_message_length}",
+                    f"Repeated character limit: {row.repeated_characters}",
+                    f"Replacements: {replacements}",
                 ]
             ),
             ephemeral=True,
         )
+
+    set_group = app_commands.Group(name="set", description="Change Talkmodachi settings.")
+
+    async def set_bool(interaction: discord.Interaction, column: str, label: str, value: bool) -> None:
+        assert interaction.guild is not None
+        bot.storage.set_guild_value(interaction.guild.id, column, int(value))
+        await interaction.response.send_message(f"{label} is now {format_bool(value)}.", ephemeral=True)
+
+    @set_group.command(name="channel", description="Set the text channel Talkmodachi reads from.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def set_channel(interaction: discord.Interaction, channel: discord.TextChannel) -> None:
+        assert interaction.guild is not None
+        bot.storage.set_guild_value(interaction.guild.id, "setup_channel_id", channel.id)
+        await interaction.response.send_message(f"Talkmodachi will read messages from {channel.mention}.", ephemeral=True)
+
+    @set_group.command(name="autojoin", description="Allow automatic voice join when someone sends TTS.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def set_autojoin(interaction: discord.Interaction, enabled: bool) -> None:
+        await set_bool(interaction, "autojoin", "Autojoin", enabled)
+
+    @set_group.command(name="say_name", description="Say '<name> said' before each message.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def set_say_name(interaction: discord.Interaction, enabled: bool) -> None:
+        await set_bool(interaction, "announce_name", "Saying names", enabled)
+
+    @set_group.command(name="say_emoji", description="Say emoji names instead of skipping emoji.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def set_say_emoji(interaction: discord.Interaction, enabled: bool) -> None:
+        assert interaction.guild is not None
+        bot.storage.set_guild_value(interaction.guild.id, "skip_emoji", int(not enabled))
+        await interaction.response.send_message(f"Saying emoji is now {format_bool(enabled)}.", ephemeral=True)
+
+    @set_group.command(name="skip_emoji", description="Skip emoji within messages.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def set_skip_emoji(interaction: discord.Interaction, enabled: bool) -> None:
+        await set_bool(interaction, "skip_emoji", "Skipping emoji", enabled)
+
+    @set_group.command(name="bot_ignore", description="Ignore messages from bots and webhooks.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def set_bot_ignore(interaction: discord.Interaction, enabled: bool) -> None:
+        await set_bool(interaction, "ignore_bots", "Bot ignore", enabled)
+
+    @set_group.command(name="require_same_vc", description="Only read users in the same voice channel as the bot.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def set_require_same_vc(interaction: discord.Interaction, enabled: bool) -> None:
+        await set_bool(interaction, "require_same_vc", "Require same VC", enabled)
+
+    @set_group.command(name="text_in_voice", description="Read Discord text-in-voice channels.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def set_text_in_voice(interaction: discord.Interaction, enabled: bool) -> None:
+        await set_bool(interaction, "text_in_voice", "Text-in-voice", enabled)
+
+    @set_group.command(name="required_prefix", description="Require a prefix before TTS messages.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def set_required_prefix(interaction: discord.Interaction, prefix: str | None = None) -> None:
+        assert interaction.guild is not None
+        try:
+            normalized = normalize_prefix(prefix)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        bot.storage.set_guild_value(interaction.guild.id, "required_prefix", normalized)
+        rendered = normalized if normalized else "none"
+        await interaction.response.send_message(f"Required prefix is now `{rendered}`.", ephemeral=True)
+
+    @set_group.command(name="required_role", description="Require a Discord role to use TTS.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def set_required_role(interaction: discord.Interaction, role: discord.Role | None = None) -> None:
+        assert interaction.guild is not None
+        bot.storage.set_guild_value(interaction.guild.id, "required_role_id", role.id if role else None)
+        rendered = role.mention if role else "none"
+        await interaction.response.send_message(f"Required role is now {rendered}.", ephemeral=True)
+
+    @set_group.command(name="message_length", description="Set the maximum TTS message length.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def set_message_length(interaction: discord.Interaction, length: app_commands.Range[int, 20, 500]) -> None:
+        assert interaction.guild is not None
+        bot.storage.set_guild_value(interaction.guild.id, "max_message_length", int(length))
+        await interaction.response.send_message(f"Max message length is now {length}.", ephemeral=True)
+
+    @set_group.command(name="repeated_characters", description="Clamp long repeated character runs.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def set_repeated_characters(interaction: discord.Interaction, limit: app_commands.Range[int, 0, 20]) -> None:
+        assert interaction.guild is not None
+        bot.storage.set_guild_value(interaction.guild.id, "repeated_characters", int(limit))
+        rendered = "off" if limit == 0 else str(limit)
+        await interaction.response.send_message(f"Repeated character clamp is now {rendered}.", ephemeral=True)
+
+    @set_group.command(name="nickname", description="Change the name used in '<name> said'.")
+    async def set_nickname(
+        interaction: discord.Interaction,
+        user: discord.Member | None = None,
+        nickname: str | None = None,
+    ) -> None:
+        assert interaction.guild is not None
+        target = user or interaction.user
+        assert isinstance(target, (discord.Member, discord.User))
+        if target.id != interaction.user.id:
+            permissions = getattr(interaction.user, "guild_permissions", None)
+            if permissions is None or not permissions.manage_nicknames:
+                await interaction.response.send_message("You need Manage Nicknames to change someone else's TTS name.", ephemeral=True)
+                return
+        normalized = normalize_optional_text(nickname)
+        if normalized and (len(normalized) > 100 or ("<" in normalized and ">" in normalized)):
+            await interaction.response.send_message("Use 100 or fewer characters and no mentions/custom emoji.", ephemeral=True)
+            return
+        bot.storage.set_nickname(interaction.guild.id, target.id, normalized)
+        if normalized:
+            await interaction.response.send_message(f"TTS name for {target.mention} is now `{normalized}`.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"Reset TTS name for {target.mention}.", ephemeral=True)
+
+    @set_group.command(name="server_voice", description="Set the server default voice.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def set_server_voice(interaction: discord.Interaction, voice_id: str) -> None:
+        assert interaction.guild is not None
+        if not bot.storage.has_voice(voice_id, interaction.guild.id, None):
+            await interaction.response.send_message("No matching server voice found. Use a built-in voice for server defaults.", ephemeral=True)
+            return
+        bot.storage.set_guild_value(interaction.guild.id, "default_voice_id", voice_id)
+        await interaction.response.send_message(f"Server default voice is now `{voice_id}`.", ephemeral=True)
+
+    bot.tree.add_command(set_group)
+
+    replace_group = app_commands.Group(name="replace", description="Manage TTS pronunciation replacements.")
+
+    @replace_group.command(name="add", description="Replace one word or phrase with another before TTS.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def replacement_add(interaction: discord.Interaction, source: str, replacement: str) -> None:
+        assert interaction.guild is not None
+        source = source.strip().lower()
+        replacement = replacement.strip()
+        if not source or not replacement or len(source) > 80 or len(replacement) > 120:
+            await interaction.response.send_message("Use a source under 80 chars and replacement under 120 chars.", ephemeral=True)
+            return
+        bot.storage.set_replacement(interaction.guild.id, source, replacement)
+        await interaction.response.send_message(f"`{source}` will be read as `{replacement}`.", ephemeral=True)
+
+    @replace_group.command(name="remove", description="Remove a pronunciation replacement.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def replacement_remove(interaction: discord.Interaction, source: str) -> None:
+        assert interaction.guild is not None
+        deleted = bot.storage.delete_replacement(interaction.guild.id, source.strip().lower())
+        await interaction.response.send_message("Removed." if deleted else "No matching replacement found.", ephemeral=True)
+
+    @replace_group.command(name="clear", description="Remove all pronunciation replacements.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def replacement_clear(interaction: discord.Interaction) -> None:
+        assert interaction.guild is not None
+        count = bot.storage.clear_replacements(interaction.guild.id)
+        await interaction.response.send_message(f"Removed {count} replacements.", ephemeral=True)
+
+    @replace_group.command(name="list", description="List pronunciation replacements.")
+    async def replacement_list(interaction: discord.Interaction) -> None:
+        assert interaction.guild is not None
+        replacements = bot.storage.list_replacements(interaction.guild.id)
+        if not replacements:
+            await interaction.response.send_message("No replacements configured.", ephemeral=True)
+            return
+        rendered = "\n".join(f"`{source}` -> `{replacement}`" for source, replacement in replacements[:25])
+        await interaction.response.send_message(rendered, ephemeral=True)
+
+    bot.tree.add_command(replace_group)
 
     voice_group = app_commands.Group(name="voice", description="Manage Talkmodachi voices.")
 
@@ -249,6 +462,9 @@ def register_commands(bot: TalkmodachiBot) -> None:
     @voice_group.command(name="use", description="Use a voice for your messages.")
     async def voice_use(interaction: discord.Interaction, voice_id: str) -> None:
         assert interaction.guild is not None
+        if not bot.storage.has_voice(voice_id, interaction.guild.id, interaction.user.id):
+            await interaction.response.send_message("No matching voice found.", ephemeral=True)
+            return
         bot.storage.set_user_default(interaction.guild.id, interaction.user.id, voice_id)
         await interaction.response.send_message(f"Your voice is now `{voice_id}`.", ephemeral=True)
 
@@ -256,8 +472,21 @@ def register_commands(bot: TalkmodachiBot) -> None:
     @app_commands.checks.has_permissions(manage_guild=True)
     async def voice_default(interaction: discord.Interaction, voice_id: str) -> None:
         assert interaction.guild is not None
+        if not bot.storage.has_voice(voice_id, interaction.guild.id, None):
+            await interaction.response.send_message("No matching server voice found. Use a built-in voice for server defaults.", ephemeral=True)
+            return
         bot.storage.set_guild_value(interaction.guild.id, "default_voice_id", voice_id)
         await interaction.response.send_message(f"Server default voice is now `{voice_id}`.", ephemeral=True)
+
+    @voice_group.command(name="current", description="Show your current voice.")
+    async def voice_current(interaction: discord.Interaction) -> None:
+        assert interaction.guild is not None
+        settings = bot.storage.get_guild_settings(interaction.guild.id)
+        voice_id = bot.storage.get_user_default(interaction.guild.id, interaction.user.id)
+        if voice_id:
+            await interaction.response.send_message(f"Your voice is `{voice_id}`.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"Using server default `{settings.default_voice_id}`.", ephemeral=True)
 
     @voice_group.command(name="random", description="Use a random built-in voice.")
     async def voice_random(interaction: discord.Interaction) -> None:
@@ -281,7 +510,7 @@ def register_commands(bot: TalkmodachiBot) -> None:
         assert interaction.guild is not None
         voice = VoiceParams(pitch=pitch, speed=speed, quality=quality, tone=tone, accent=accent, intonation=intonation, lang=lang)
         voice.validate()
-        voice_id = name.lower().replace(" ", "-")[:32]
+        voice_id = normalize_voice_id(name) or "voice"
         bot.storage.save_voice(
             voice_id=voice_id,
             name=name,

@@ -14,12 +14,13 @@ from .voices import BUILTIN_VOICES, VoiceParams
 class GuildSettings:
     guild_id: int
     setup_channel_id: int | None = None
-    autojoin: bool = True
+    autojoin: bool = False
     require_same_vc: bool = True
     ignore_bots: bool = True
     required_prefix: str | None = None
     required_role_id: int | None = None
     max_message_length: int = 200
+    repeated_characters: int = 8
     text_in_voice: bool = True
     skip_emoji: bool = False
     announce_name: bool = True
@@ -45,12 +46,13 @@ class Storage:
                 CREATE TABLE IF NOT EXISTS guild_settings (
                     guild_id INTEGER PRIMARY KEY,
                     setup_channel_id INTEGER,
-                    autojoin INTEGER NOT NULL DEFAULT 1,
+                    autojoin INTEGER NOT NULL DEFAULT 0,
                     require_same_vc INTEGER NOT NULL DEFAULT 1,
                     ignore_bots INTEGER NOT NULL DEFAULT 1,
                     required_prefix TEXT,
                     required_role_id INTEGER,
                     max_message_length INTEGER NOT NULL DEFAULT 200,
+                    repeated_characters INTEGER NOT NULL DEFAULT 8,
                     text_in_voice INTEGER NOT NULL DEFAULT 1,
                     skip_emoji INTEGER NOT NULL DEFAULT 0,
                     announce_name INTEGER NOT NULL DEFAULT 1,
@@ -58,6 +60,7 @@ class Storage:
                 )
                 """
             )
+            self._ensure_column("guild_settings", "repeated_characters", "INTEGER NOT NULL DEFAULT 8")
             self.conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS voice_presets (
@@ -73,6 +76,26 @@ class Storage:
             )
             self.conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS nicknames (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    PRIMARY KEY(guild_id, user_id)
+                )
+                """
+            )
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS text_replacements (
+                    guild_id INTEGER NOT NULL,
+                    source TEXT NOT NULL,
+                    replacement TEXT NOT NULL,
+                    PRIMARY KEY(guild_id, source)
+                )
+                """
+            )
+            self.conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS user_settings (
                     guild_id INTEGER NOT NULL,
                     user_id INTEGER NOT NULL,
@@ -81,6 +104,31 @@ class Storage:
                 )
                 """
             )
+
+    def _ensure_column(self, table: str, column: str, definition: str) -> None:
+        columns = {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")}
+        if column not in columns:
+            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _ensure_guild_row(self, guild_id: int) -> None:
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO guild_settings(
+                guild_id,
+                autojoin,
+                require_same_vc,
+                ignore_bots,
+                max_message_length,
+                repeated_characters,
+                text_in_voice,
+                skip_emoji,
+                announce_name,
+                default_voice_id
+            )
+            VALUES (?, 0, 1, 1, 200, 8, 1, 0, 1, 'adultf')
+            """,
+            (guild_id,),
+        )
 
     def get_guild_settings(self, guild_id: int) -> GuildSettings:
         with self.lock:
@@ -96,6 +144,7 @@ class Storage:
                 required_prefix=row["required_prefix"],
                 required_role_id=row["required_role_id"],
                 max_message_length=int(row["max_message_length"]),
+                repeated_characters=int(row["repeated_characters"]),
                 text_in_voice=bool(row["text_in_voice"]),
                 skip_emoji=bool(row["skip_emoji"]),
                 announce_name=bool(row["announce_name"]),
@@ -111,6 +160,7 @@ class Storage:
             "required_prefix",
             "required_role_id",
             "max_message_length",
+            "repeated_characters",
             "text_in_voice",
             "skip_emoji",
             "announce_name",
@@ -119,7 +169,7 @@ class Storage:
         if column not in allowed:
             raise ValueError(f"Unsupported guild setting: {column}")
         with self.lock, self.conn:
-            self.conn.execute("INSERT OR IGNORE INTO guild_settings(guild_id) VALUES (?)", (guild_id,))
+            self._ensure_guild_row(guild_id)
             self.conn.execute(f"UPDATE guild_settings SET {column} = ? WHERE guild_id = ?", (value, guild_id))
 
     def save_voice(
@@ -189,6 +239,24 @@ class Storage:
             return BUILTIN_VOICES["adultf"]
         return VoiceParams.from_mapping(json.loads(row["params_json"]))
 
+    def has_voice(self, voice_id: str, guild_id: int | None = None, user_id: int | None = None) -> bool:
+        if voice_id in BUILTIN_VOICES:
+            return True
+        with self.lock:
+            row = self.conn.execute(
+                """
+                SELECT 1 FROM voice_presets
+                WHERE id = ? AND (
+                    (owner_user_id = ? AND guild_id = ?)
+                    OR (owner_user_id IS NULL AND guild_id = ?)
+                    OR (owner_user_id = ? AND guild_id IS NULL)
+                )
+                LIMIT 1
+                """,
+                (voice_id, user_id, guild_id, guild_id, user_id),
+            ).fetchone()
+        return row is not None
+
     def list_voices(self, guild_id: int, user_id: int) -> list[tuple[str, str]]:
         voices = [(voice_id, voice_id) for voice_id in BUILTIN_VOICES]
         with self.lock:
@@ -205,3 +273,56 @@ class Storage:
         voices.extend((row["id"], row["name"]) for row in rows)
         return voices
 
+    def get_nickname(self, guild_id: int, user_id: int) -> str | None:
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT name FROM nicknames WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ).fetchone()
+            return None if row is None else row["name"]
+
+    def set_nickname(self, guild_id: int, user_id: int, name: str | None) -> None:
+        with self.lock, self.conn:
+            if name:
+                self.conn.execute(
+                    """
+                    INSERT INTO nicknames(guild_id, user_id, name)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(guild_id, user_id) DO UPDATE SET name = excluded.name
+                    """,
+                    (guild_id, user_id, name),
+                )
+            else:
+                self.conn.execute("DELETE FROM nicknames WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
+
+    def set_replacement(self, guild_id: int, source: str, replacement: str) -> None:
+        with self.lock, self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO text_replacements(guild_id, source, replacement)
+                VALUES (?, ?, ?)
+                ON CONFLICT(guild_id, source) DO UPDATE SET replacement = excluded.replacement
+                """,
+                (guild_id, source, replacement),
+            )
+
+    def delete_replacement(self, guild_id: int, source: str) -> bool:
+        with self.lock, self.conn:
+            cur = self.conn.execute(
+                "DELETE FROM text_replacements WHERE guild_id = ? AND source = ?",
+                (guild_id, source),
+            )
+            return cur.rowcount > 0
+
+    def clear_replacements(self, guild_id: int) -> int:
+        with self.lock, self.conn:
+            cur = self.conn.execute("DELETE FROM text_replacements WHERE guild_id = ?", (guild_id,))
+            return cur.rowcount
+
+    def list_replacements(self, guild_id: int) -> list[tuple[str, str]]:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT source, replacement FROM text_replacements WHERE guild_id = ? ORDER BY source LIMIT 50",
+                (guild_id,),
+            ).fetchall()
+        return [(row["source"], row["replacement"]) for row in rows]

@@ -2,11 +2,11 @@
 
 Discord-first Tomodachi Life TTS using Talkmodachi's patched Citra renderer.
 
-This fork keeps the original Talkmodachi engine work and turns it into a server bot: admins run `/setup`, the bot joins voice with `/join`, then normal messages in the configured channel are spoken with Tomodachi-style voices.
+This fork keeps the original Talkmodachi engine work and turns it into a server bot: admins run `/setup`, someone runs `/join`, then normal messages in the configured channel are spoken with Tomodachi-style voices.
 
 ## What Changed
 
-- Discord bot UX inspired by Discord-TTS/Bot: `/setup`, `/join`, `/leave`, `/skip`, `/settings`, and `/voice ...`.
+- Discord bot UX inspired by Discord-TTS/Bot: `/setup`, `/join`, `/leave`, `/skip`, `/settings`, `/set ...`, `/replace ...`, and `/voice ...`.
 - Warm renderer service instead of per-request Citra startup.
 - File cache keyed by text, voice params, language, mode, and engine version, with duplicate in-flight renders collapsed.
 - SQLite storage for guild settings and user/guild voice presets.
@@ -28,10 +28,17 @@ The renderer exposes health on the host at `http://127.0.0.1:18080/health` by de
 - `/leave` leaves voice.
 - `/skip` clears queued TTS and stops current playback.
 - `/settings` shows current server settings.
+- `/set autojoin` controls whether messages can make the bot join automatically. It is off by default.
+- `/set say_name` controls whether messages are prefixed with the speaker name.
+- `/set say_emoji` and `/set skip_emoji` control emoji pronunciation.
+- `/set required_prefix`, `/set required_role`, `/set message_length`, `/set repeated_characters`, `/set text_in_voice`, `/set bot_ignore`, and `/set require_same_vc` mirror the common Discord-TTS/Bot server settings.
+- `/set nickname` changes the spoken name used for a user.
+- `/replace add/remove/list/clear` manages server pronunciation replacements before TTS.
 - `/voice list` lists built-in and saved voices.
 - `/voice save` saves a custom voice from Talkmodachi parameters.
 - `/voice use` selects your voice.
 - `/voice default` sets the server default.
+- `/voice current` shows your selected voice.
 - `/voice random` picks a random built-in voice.
 - `/voice delete` deletes one of your custom voices.
 
