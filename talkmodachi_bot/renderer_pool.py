@@ -68,7 +68,7 @@ def _worker_loop(spec: WorkerSpec, inbox: mp.Queue, outbox: mp.Queue) -> None:
 
     def citra_pid() -> int | None:
         process = getattr(tts, "emulatorProcess", None)
-        return process.pid if process is not None else None
+        return process.pid if process is not None and process.poll() is None else None
 
     def state_payload(event: str) -> dict[str, object]:
         return {
@@ -149,13 +149,19 @@ def _worker_loop(spec: WorkerSpec, inbox: mp.Queue, outbox: mp.Queue) -> None:
             restart_emulator(f"Citra did not respond after resume: {error}")
 
     def maybe_suspend_emulator() -> None:
-        nonlocal paused, last_activity_at
+        nonlocal paused, last_activity_at, last_error
         if idle_suspend_seconds <= 0 or paused or active_job_count:
             return
         process = getattr(tts, "emulatorProcess", None)
         if process is None:
             return
         if process.poll() is not None:
+            try:
+                restart_emulator(f"Citra exited with code {process.returncode} while idle")
+            except Exception:
+                last_error = traceback.format_exc()
+                log_event(f"failed to restart idle Citra: {last_error}")
+                publish_state("restart_error")
             return
         if time.time() - last_activity_at < idle_suspend_seconds:
             return
