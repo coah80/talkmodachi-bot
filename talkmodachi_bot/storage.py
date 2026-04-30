@@ -32,8 +32,10 @@ class Storage:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
-        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        self.conn = sqlite3.connect(self.path, check_same_thread=False, timeout=30)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA busy_timeout = 30000")
+        self.conn.execute("PRAGMA journal_mode = WAL")
         self.migrate()
 
     def close(self) -> None:

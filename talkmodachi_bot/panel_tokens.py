@@ -1,0 +1,87 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import os
+import time
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class PanelSession:
+    guild_id: int
+    user_id: int
+    expires_at: int
+
+
+def panel_signing_key() -> str | None:
+    return (
+        os.environ.get("TALKMODACHI_PANEL_SIGNING_KEY")
+        or os.environ.get("TALKMODACHI_PANEL_TOKEN")
+        or os.environ.get("DISCORD_TOKEN")
+    )
+
+
+def create_panel_token(*, guild_id: int, user_id: int, ttl_seconds: int = 86400) -> str:
+    key = panel_signing_key()
+    if not key:
+        raise RuntimeError("TALKMODACHI_PANEL_SIGNING_KEY is required for voice panel links")
+
+    now = int(time.time())
+    payload = {
+        "guild_id": guild_id,
+        "user_id": user_id,
+        "expires_at": now + ttl_seconds,
+    }
+    body = _encode_json(payload)
+    signature = _sign(body, key)
+    return f"{body}.{signature}"
+
+
+def parse_panel_token(token: str | None) -> PanelSession:
+    key = panel_signing_key()
+    if not key:
+        raise ValueError("Panel signing key is not configured")
+    if not token or "." not in token:
+        raise ValueError("Panel token is missing")
+
+    body, signature = token.split(".", 1)
+    if not hmac.compare_digest(signature, _sign(body, key)):
+        raise ValueError("Panel token signature is invalid")
+
+    payload = _decode_json(body)
+    expires_at = int(payload["expires_at"])
+    if expires_at < int(time.time()):
+        raise ValueError("Panel token expired")
+
+    return PanelSession(
+        guild_id=int(payload["guild_id"]),
+        user_id=int(payload["user_id"]),
+        expires_at=expires_at,
+    )
+
+
+def _sign(body: str, key: str) -> str:
+    digest = hmac.new(key.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).digest()
+    return _b64encode(digest)
+
+
+def _encode_json(payload: dict[str, int]) -> str:
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return _b64encode(raw)
+
+
+def _decode_json(body: str) -> dict[str, Any]:
+    return json.loads(_b64decode(body).decode("utf-8"))
+
+
+def _b64encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)

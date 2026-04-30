@@ -5,12 +5,14 @@ import logging
 import os
 import random
 import tempfile
+import urllib.parse
 from pathlib import Path
 
 import discord
 from discord import app_commands
 
 from .message_cleaner import clean_message
+from .panel_tokens import create_panel_token
 from .render_client import RendererClient
 from .storage import Storage
 from .voices import BUILTIN_VOICES, VoiceParams
@@ -58,6 +60,12 @@ def bot_name_for_message(storage: Storage, message: discord.Message) -> str:
     if nickname:
         return nickname
     return message.author.display_name
+
+
+def panel_url_for(guild_id: int, user_id: int) -> str:
+    base_url = os.environ.get("TALKMODACHI_PANEL_URL", "https://tomo.coah80.com").rstrip("/")
+    token = create_panel_token(guild_id=guild_id, user_id=user_id)
+    return f"{base_url}/?{urllib.parse.urlencode({'token': token})}"
 
 
 class GuildPlayer:
@@ -454,7 +462,15 @@ def register_commands(bot: TalkmodachiBot) -> None:
 
     @voice_group.command(name="panel", description="customize the voice at tomo.coah80.com!")
     async def voice_panel(interaction: discord.Interaction) -> None:
-        await interaction.response.send_message("customize the voice at tomo.coah80.com!", ephemeral=True)
+        assert interaction.guild is not None
+        try:
+            url = panel_url_for(interaction.guild.id, interaction.user.id)
+        except RuntimeError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        view = discord.ui.View()
+        view.add_item(discord.ui.Button(label="Open voice panel", url=url))
+        await interaction.response.send_message("customize the voice at tomo.coah80.com!", view=view, ephemeral=True)
 
     @voice_group.command(name="list", description="List available voices.")
     async def voice_list(interaction: discord.Interaction) -> None:

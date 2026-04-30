@@ -13,7 +13,9 @@ from pydantic import BaseModel, Field
 
 from .audio import amplify_wav
 from .panel import PANEL_HTML
+from .panel_tokens import PanelSession, parse_panel_token
 from .renderer_pool import RenderPayload, RendererPool
+from .storage import Storage
 from .voices import BUILTIN_VOICES, LANG_TO_ID, VoiceParams, cache_key
 
 
@@ -23,9 +25,15 @@ class RenderRequest(BaseModel):
     mode: Literal["text", "sing"] = "text"
 
 
+class SaveVoiceRequest(BaseModel):
+    voice: dict[str, int | str] = Field(default_factory=dict)
+
+
 app = FastAPI(title="Talkmodachi Renderer", version="0.1.0")
 pool: RendererPool | None = None
+storage: Storage | None = None
 cache_dir = Path(os.environ.get("TALKMODACHI_CACHE_DIR", "/cache"))
+database_path = Path(os.environ.get("DATABASE_PATH", "/data/talkmodachi.sqlite3"))
 engine_version = os.environ.get("TALKMODACHI_ENGINE_VERSION", "talkmodachi-v1")
 inflight_lock = asyncio.Lock()
 inflight_tasks: dict[str, asyncio.Task[dict[str, object]]] = {}
@@ -42,8 +50,9 @@ public_hosts = {
 
 @app.on_event("startup")
 async def startup() -> None:
-    global pool, render_semaphore
+    global pool, render_semaphore, storage
     cache_dir.mkdir(parents=True, exist_ok=True)
+    storage = Storage(database_path)
     pool = RendererPool.from_env()
     render_semaphore = asyncio.Semaphore(max_inflight_renders)
     pool.start()
@@ -53,6 +62,8 @@ async def startup() -> None:
 async def shutdown() -> None:
     if pool is not None:
         pool.stop()
+    if storage is not None:
+        storage.close()
 
 
 @app.get("/health")
@@ -73,6 +84,48 @@ async def config(request: Request) -> dict[str, object]:
         "languages": sorted(LANG_TO_ID),
         "defaultMessage": "This is a test message for the discord bot.",
         "maxSafeSamples": 48,
+    }
+
+
+@app.get("/api/session")
+async def session(request: Request) -> dict[str, object]:
+    panel_session = require_panel_session(request)
+    store = storage_for()
+    voice_id = store.get_user_default(panel_session.guild_id, panel_session.user_id)
+    settings = store.get_guild_settings(panel_session.guild_id)
+    effective_voice_id = voice_id or settings.default_voice_id
+    voice = store.resolve_voice(effective_voice_id, panel_session.guild_id, panel_session.user_id)
+    return {
+        "guildId": panel_session.guild_id,
+        "userId": panel_session.user_id,
+        "voiceId": effective_voice_id,
+        "voice": voice.to_dict(),
+        "expiresAt": panel_session.expires_at,
+    }
+
+
+@app.post("/api/voice/save")
+async def save_voice(request: Request, payload: SaveVoiceRequest) -> dict[str, object]:
+    panel_session = require_panel_session(request)
+    try:
+        voice = VoiceParams.from_mapping(payload.voice)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    store = storage_for()
+    voice_id = "panel"
+    store.save_voice(
+        voice_id=voice_id,
+        name="Panel voice",
+        voice=voice,
+        guild_id=panel_session.guild_id,
+        owner_user_id=panel_session.user_id,
+    )
+    store.set_user_default(panel_session.guild_id, panel_session.user_id, voice_id)
+    return {
+        "ok": True,
+        "voiceId": voice_id,
+        "voice": voice.to_dict(),
     }
 
 
@@ -176,8 +229,27 @@ def require_panel_token(request: Request) -> None:
     if not panel_token or not is_public_request(request):
         return
     request_token = request.headers.get("x-panel-token") or request.query_params.get("token") or ""
-    if not hmac.compare_digest(request_token, panel_token):
+    if hmac.compare_digest(request_token, panel_token):
+        return
+    try:
+        parse_panel_token(request_token)
+        return
+    except ValueError:
         raise HTTPException(status_code=401, detail="Panel token required")
+
+
+def require_panel_session(request: Request) -> PanelSession:
+    token = request.headers.get("x-panel-token") or request.query_params.get("token") or ""
+    try:
+        return parse_panel_token(token)
+    except ValueError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+
+
+def storage_for() -> Storage:
+    if storage is None:
+        raise HTTPException(status_code=503, detail="Storage is not ready")
+    return storage
 
 
 def is_public_request(request: Request) -> bool:

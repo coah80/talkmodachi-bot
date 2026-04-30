@@ -9,6 +9,7 @@ services:
     environment:
       RENDERER_HOST: 0.0.0.0
       RENDERER_PORT: 8080
+      DATABASE_PATH: /data/talkmodachi.sqlite3
       TALKMODACHI_CACHE_DIR: /cache
       TALKMODACHI_WORKER_ROMS: ${TALKMODACHI_WORKER_ROMS:-US}
       TALKMODACHI_US_WORKERS: ${TALKMODACHI_US_WORKERS:-1}
@@ -17,12 +18,14 @@ services:
       TALKMODACHI_CACHE_MAX_BYTES: ${TALKMODACHI_CACHE_MAX_BYTES:-1073741824}
       TALKMODACHI_PANEL_TOKEN: ${TALKMODACHI_PANEL_TOKEN:-}
       TALKMODACHI_PUBLIC_HOSTS: ${TALKMODACHI_PUBLIC_HOSTS:-}
+      TALKMODACHI_PANEL_SIGNING_KEY: ${TALKMODACHI_PANEL_SIGNING_KEY:-}
       CITRA_MAX_RUNTIME_SECONDS: "0"
       SDL_AUDIODRIVER: dummy
       SDL_VIDEODRIVER: dummy
     volumes:
       - ./roms:/opt:ro
       - renderer-cache:/cache
+      - bot-data:/data
     ports:
       - "${RENDERER_BIND:-127.0.0.1}:${RENDERER_HOST_PORT:-18080}:8080"
     healthcheck:
@@ -43,6 +46,8 @@ services:
       DATABASE_PATH: /data/talkmodachi.sqlite3
       RENDERER_URL: http://tts-worker:8080
       SYNC_COMMANDS_ON_START: ${SYNC_COMMANDS_ON_START:-true}
+      TALKMODACHI_PANEL_URL: ${TALKMODACHI_PANEL_URL:-https://tomo.coah80.com}
+      TALKMODACHI_PANEL_SIGNING_KEY: ${TALKMODACHI_PANEL_SIGNING_KEY:-}
     volumes:
       - bot-data:/data
     depends_on:

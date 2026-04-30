@@ -248,7 +248,7 @@ PANEL_HTML = """<!doctype html>
           <div class="controls" id="controls"></div>
           <div class="button-row">
             <button class="primary" id="play">Play Current</button>
-            <button id="copy">Copy /voice save</button>
+            <button id="save" disabled>Save To Discord</button>
             <button id="reset">Reset</button>
           </div>
           <audio class="audio" id="audio" controls></audio>
@@ -289,7 +289,7 @@ PANEL_HTML = """<!doctype html>
           <div class="preset-grid" id="presets"></div>
         </section>
         <section>
-          <h2>Discord Command</h2>
+          <h2>Discord Voice</h2>
           <textarea class="command" id="command" readonly></textarea>
         </section>
       </aside>
@@ -300,6 +300,7 @@ PANEL_HTML = """<!doctype html>
     const state = {
       token: new URLSearchParams(location.search).get("token") || sessionStorage.getItem("talkmodachiToken") || "",
       builtins: {},
+      session: null,
       values: {
         pitch: 50,
         speed: 50,
@@ -376,7 +377,10 @@ PANEL_HTML = """<!doctype html>
 
     function updateCommand() {
       const v = voice();
-      $("command").value = `/voice save panel pitch:${v.pitch} speed:${v.speed} quality:${v.quality} tone:${v.tone} accent:${v.accent} intonation:${v.intonation} lang:${v.lang} volume:${v.volume}`;
+      const status = state.session
+        ? `Ready to save for Discord user ${state.session.userId}.`
+        : "Open this panel from /voice panel in Discord to save directly.";
+      $("command").value = `${status}\n\npitch:${v.pitch} speed:${v.speed} quality:${v.quality} tone:${v.tone} accent:${v.accent} intonation:${v.intonation} lang:${v.lang} volume:${v.volume}`;
     }
 
     function applyVoice(params) {
@@ -416,6 +420,33 @@ PANEL_HTML = """<!doctype html>
         alert(String(error.message || error));
       } finally {
         $("play").disabled = false;
+      }
+    }
+
+    async function saveCurrent() {
+      if (!state.session) {
+        setStatus("open from /voice panel");
+        alert("Use /voice panel in Discord, then open the private link it gives you.");
+        return;
+      }
+      $("save").disabled = true;
+      setStatus("saving");
+      try {
+        const response = await fetch("/api/voice/save", {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({voice: voice()})
+        });
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+        const result = await response.json();
+        setStatus(`saved ${result.voiceId}`);
+      } catch (error) {
+        setStatus("save failed");
+        alert(String(error.message || error));
+      } finally {
+        $("save").disabled = false;
       }
     }
 
@@ -502,19 +533,28 @@ PANEL_HTML = """<!doctype html>
       const config = await response.json();
       state.builtins = config.builtins;
       renderPresets();
-      setStatus("ready");
+      let finalStatus = "ready";
+      if (state.token) {
+        const sessionResponse = await fetch("/api/session", {headers: {"X-Panel-Token": state.token}});
+        if (sessionResponse.ok) {
+          state.session = await sessionResponse.json();
+          applyVoice(state.session.voice);
+          finalStatus = "linked";
+        } else {
+          finalStatus = "invalid panel link";
+        }
+      }
+      $("save").disabled = !state.session;
+      setStatus(finalStatus);
     }
 
     $("play").addEventListener("click", playCurrent);
+    $("save").addEventListener("click", saveCurrent);
     $("pack").addEventListener("click", generatePack);
     $("clearPack").addEventListener("click", () => {
       $("samples").innerHTML = "";
       $("progress").style.width = "0%";
       setStatus("ready");
-    });
-    $("copy").addEventListener("click", async () => {
-      await navigator.clipboard.writeText($("command").value);
-      setStatus("copied");
     });
     $("reset").addEventListener("click", () => {
       applyVoice({pitch: 50, speed: 50, quality: 50, tone: 50, accent: 50, intonation: 1, lang: "useng", volume: 165});
