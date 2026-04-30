@@ -68,6 +68,18 @@ def panel_url_for(guild_id: int, user_id: int) -> str:
     return f"{base_url}/?{urllib.parse.urlencode({'token': token})}"
 
 
+async def send_voice_panel(interaction: discord.Interaction) -> None:
+    assert interaction.guild is not None
+    try:
+        url = panel_url_for(interaction.guild.id, interaction.user.id)
+    except RuntimeError as error:
+        await interaction.response.send_message(str(error), ephemeral=True)
+        return
+    view = discord.ui.View()
+    view.add_item(discord.ui.Button(label="Open voice panel", url=url))
+    await interaction.response.send_message("customize the voice at tomo.coah80.com!", view=view, ephemeral=True)
+
+
 class GuildPlayer:
     def __init__(self, bot: "TalkmodachiBot", guild_id: int) -> None:
         self.bot = bot
@@ -458,19 +470,11 @@ def register_commands(bot: TalkmodachiBot) -> None:
 
     bot.tree.add_command(replace_group)
 
-    voice_group = app_commands.Group(name="voice", description="customize the voice at tomo.coah80.com!")
+    @bot.tree.command(name="voice", description="customize the voice at tomo.coah80.com!")
+    async def voice(interaction: discord.Interaction) -> None:
+        await send_voice_panel(interaction)
 
-    @voice_group.command(name="panel", description="customize the voice at tomo.coah80.com!")
-    async def voice_panel(interaction: discord.Interaction) -> None:
-        assert interaction.guild is not None
-        try:
-            url = panel_url_for(interaction.guild.id, interaction.user.id)
-        except RuntimeError as error:
-            await interaction.response.send_message(str(error), ephemeral=True)
-            return
-        view = discord.ui.View()
-        view.add_item(discord.ui.Button(label="Open voice panel", url=url))
-        await interaction.response.send_message("customize the voice at tomo.coah80.com!", view=view, ephemeral=True)
+    voice_group = app_commands.Group(name="voices", description="Manual Talkmodachi voice controls.")
 
     @voice_group.command(name="list", description="List available voices.")
     async def voice_list(interaction: discord.Interaction) -> None:

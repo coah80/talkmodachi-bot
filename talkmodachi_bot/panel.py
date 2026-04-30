@@ -379,7 +379,7 @@ PANEL_HTML = """<!doctype html>
       const v = voice();
       const status = state.session
         ? `Ready to save for Discord user ${state.session.userId}.`
-        : "Open this panel from /voice panel in Discord to save directly.";
+        : "Open this panel from /voice in Discord to save directly.";
       $("command").value = `${status}\n\npitch:${v.pitch} speed:${v.speed} quality:${v.quality} tone:${v.tone} accent:${v.accent} intonation:${v.intonation} lang:${v.lang} volume:${v.volume}`;
     }
 
@@ -425,8 +425,8 @@ PANEL_HTML = """<!doctype html>
 
     async function saveCurrent() {
       if (!state.session) {
-        setStatus("open from /voice panel");
-        alert("Use /voice panel in Discord, then open the private link it gives you.");
+        setStatus("open from /voice");
+        alert("Use /voice in Discord, then open the private link it gives you.");
         return;
       }
       $("save").disabled = true;
