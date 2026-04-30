@@ -259,8 +259,8 @@ class TalkmodachiBot(discord.Client):
         text = text[: settings.max_message_length]
 
         voice_id = (
-            self.storage.get_user_default(message.guild.id, message.author.id)
-            or self.storage.get_global_user_default(message.author.id)
+            self.storage.get_global_user_default(message.author.id)
+            or self.storage.get_user_default(message.guild.id, message.author.id)
             or settings.default_voice_id
         )
         voice = self.storage.resolve_voice(voice_id, message.guild.id, message.author.id)
@@ -510,7 +510,7 @@ def register_commands(bot: TalkmodachiBot) -> None:
         if not bot.storage.has_voice(voice_id, interaction.guild.id, interaction.user.id):
             await interaction.response.send_message("No matching voice found.", ephemeral=True)
             return
-        bot.storage.set_user_default(interaction.guild.id, interaction.user.id, voice_id)
+        bot.storage.set_global_user_default(interaction.user.id, voice_id)
         await interaction.response.send_message(f"Your voice is now `{voice_id}`.", ephemeral=True)
 
     @voice_group.command(name="default", description="Set the server default voice.")
@@ -527,7 +527,10 @@ def register_commands(bot: TalkmodachiBot) -> None:
     async def voice_current(interaction: discord.Interaction) -> None:
         assert interaction.guild is not None
         settings = bot.storage.get_guild_settings(interaction.guild.id)
-        voice_id = bot.storage.get_user_default(interaction.guild.id, interaction.user.id)
+        voice_id = bot.storage.get_global_user_default(interaction.user.id) or bot.storage.get_user_default(
+            interaction.guild.id,
+            interaction.user.id,
+        )
         if voice_id:
             await interaction.response.send_message(f"Your voice is `{voice_id}`.", ephemeral=True)
         else:
@@ -537,7 +540,7 @@ def register_commands(bot: TalkmodachiBot) -> None:
     async def voice_random(interaction: discord.Interaction) -> None:
         assert interaction.guild is not None
         voice_id = random.choice(list(BUILTIN_VOICES))
-        bot.storage.set_user_default(interaction.guild.id, interaction.user.id, voice_id)
+        bot.storage.set_global_user_default(interaction.user.id, voice_id)
         await interaction.response.send_message(f"Your voice is now `{voice_id}`.", ephemeral=True)
 
     @voice_group.command(name="save", description="Save a custom voice.")
@@ -566,20 +569,20 @@ def register_commands(bot: TalkmodachiBot) -> None:
         )
         voice.validate()
         voice_id = normalize_voice_id(name) or "voice"
-        bot.storage.save_voice(
+        bot.storage.save_global_user_voice(
+            user_id=interaction.user.id,
             voice_id=voice_id,
             name=name,
             voice=voice,
-            guild_id=interaction.guild.id,
-            owner_user_id=interaction.user.id,
         )
-        bot.storage.set_user_default(interaction.guild.id, interaction.user.id, voice_id)
         await interaction.response.send_message(f"Saved and selected `{voice_id}`.", ephemeral=True)
 
     @voice_group.command(name="delete", description="Delete one of your custom voices.")
     async def voice_delete(interaction: discord.Interaction, voice_id: str) -> None:
         assert interaction.guild is not None
-        deleted = bot.storage.delete_voice(voice_id=voice_id, guild_id=interaction.guild.id, owner_user_id=interaction.user.id)
+        deleted = bot.storage.delete_voice(voice_id=voice_id, guild_id=None, owner_user_id=interaction.user.id)
+        if deleted and bot.storage.get_global_user_default(interaction.user.id) == voice_id:
+            bot.storage.set_global_user_default(interaction.user.id, None)
         await interaction.response.send_message("Deleted." if deleted else "No matching voice found.", ephemeral=True)
 
     bot.tree.add_command(voice_group)

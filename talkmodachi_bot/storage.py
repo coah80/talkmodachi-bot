@@ -114,6 +114,7 @@ class Storage:
                 )
                 """
             )
+            self._migrate_panel_voices_to_global()
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         columns = {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")}
@@ -139,6 +140,53 @@ class Storage:
             """,
             (guild_id,),
         )
+
+    def _migrate_panel_voices_to_global(self) -> None:
+        rows = self.conn.execute(
+            """
+            SELECT owner_user_id, name, params_json, created_at
+            FROM voice_presets
+            WHERE id = 'panel' AND owner_user_id IS NOT NULL AND guild_id IS NOT NULL
+            ORDER BY owner_user_id, created_at DESC
+            """
+        ).fetchall()
+        latest_by_user: dict[int, sqlite3.Row] = {}
+        for row in rows:
+            latest_by_user.setdefault(int(row["owner_user_id"]), row)
+
+        for user_id, row in latest_by_user.items():
+            existing_global = self.conn.execute(
+                """
+                SELECT name, params_json, created_at
+                FROM voice_presets
+                WHERE id = 'panel' AND owner_user_id = ? AND guild_id IS NULL
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (user_id,),
+            ).fetchone()
+            chosen = row
+            if existing_global is not None and int(existing_global["created_at"]) >= int(row["created_at"]):
+                chosen = existing_global
+            self.conn.execute(
+                "DELETE FROM voice_presets WHERE id = 'panel' AND owner_user_id = ?",
+                (user_id,),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO voice_presets(id, guild_id, owner_user_id, name, params_json, created_at)
+                VALUES ('panel', NULL, ?, ?, ?, ?)
+                """,
+                (user_id, chosen["name"], chosen["params_json"], chosen["created_at"]),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO global_user_settings(user_id, default_voice_id)
+                VALUES (?, 'panel')
+                ON CONFLICT(user_id) DO UPDATE SET default_voice_id = 'panel'
+                """,
+                (user_id,),
+            )
 
     def get_guild_settings(self, guild_id: int) -> GuildSettings:
         with self.lock:
