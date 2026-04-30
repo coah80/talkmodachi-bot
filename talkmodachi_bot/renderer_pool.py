@@ -3,6 +3,7 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 import queue
+import signal
 import socket
 import sys
 import threading
@@ -19,6 +20,7 @@ from .voices import VoiceParams
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 API_DIR = ROOT_DIR / "api"
+WORKER_QUEUE_POLL_SECONDS = 0.25
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,8 @@ def find_free_udp_port() -> int:
 def _worker_loop(spec: WorkerSpec, inbox: mp.Queue, outbox: mp.Queue) -> None:
     os.environ.setdefault("CITRA_MAX_RUNTIME_SECONDS", "0")
     os.environ.setdefault("TALKMODACHI_POLL_INTERVAL", "0.01")
+    idle_suspend_seconds = float(os.environ.get("TALKMODACHI_IDLE_SUSPEND_SECONDS", "10"))
+    idle_resume_timeout = float(os.environ.get("TALKMODACHI_IDLE_RESUME_TIMEOUT_MS", "1000")) / 1000
     sys.path.insert(0, str(API_DIR))
 
     import citra  # type: ignore
@@ -54,22 +58,139 @@ def _worker_loop(spec: WorkerSpec, inbox: mp.Queue, outbox: mp.Queue) -> None:
 
     tts.citra.CITRA_PORT = spec.port
     tts.emu = citra.Citra(port=spec.port)
+    paused = False
+    active_job_count = 0
+    last_activity_at = time.time()
+    last_render_ms: float | None = None
+    resume_count = 0
+    restart_count = 0
+    last_error: str | None = None
+
+    def citra_pid() -> int | None:
+        process = getattr(tts, "emulatorProcess", None)
+        return process.pid if process is not None else None
+
+    def state_payload(event: str) -> dict[str, object]:
+        return {
+            "type": "state",
+            "event": event,
+            "worker": spec.name,
+            "citra_pid": citra_pid(),
+            "paused": paused,
+            "active_job_count": active_job_count,
+            "last_activity_at": last_activity_at,
+            "last_render_ms": last_render_ms,
+            "resume_count": resume_count,
+            "restart_count": restart_count,
+            "last_error": last_error,
+        }
+
+    def publish_state(event: str) -> None:
+        outbox.put(state_payload(event))
+
+    def log_event(message: str) -> None:
+        print(f"[talkmodachi-worker:{spec.name}] {message}", flush=True)
+
+    def start_emulator() -> None:
+        nonlocal paused, last_activity_at, last_error
+        tts.emu = citra.Citra(port=spec.port)
+        tts.startEmulator(spec.rom, spec.lang_id)
+        paused = False
+        last_activity_at = time.time()
+        last_error = None
+
+    def restart_emulator(reason: str) -> None:
+        nonlocal paused, restart_count, last_activity_at, last_error
+        restart_count += 1
+        last_error = reason
+        log_event(f"restarting Citra: {reason}")
+        try:
+            if paused and citra_pid() is not None:
+                os.kill(citra_pid(), signal.SIGCONT)
+        except ProcessLookupError:
+            pass
+        try:
+            tts.killEmulator()
+        except Exception:
+            pass
+        paused = False
+        start_emulator()
+        last_activity_at = time.time()
+        publish_state("restarted")
+
+    def resume_emulator() -> None:
+        nonlocal paused, resume_count, last_activity_at, last_error
+        if not paused:
+            process = getattr(tts, "emulatorProcess", None)
+            if process is None:
+                restart_emulator("Citra process missing")
+            elif process.poll() is not None:
+                restart_emulator(f"Citra exited with code {process.returncode}")
+            return
+        pid = citra_pid()
+        if pid is None:
+            restart_emulator("Citra process missing while paused")
+            return
+        try:
+            os.kill(pid, signal.SIGCONT)
+        except ProcessLookupError:
+            paused = False
+            restart_emulator("Citra process disappeared while paused")
+            return
+        paused = False
+        resume_count += 1
+        last_activity_at = time.time()
+        last_error = None
+        publish_state("resumed")
+        log_event(f"resumed Citra pid={pid}")
+        try:
+            tts.waitForStatus(1, timeout=idle_resume_timeout)
+        except Exception as error:
+            restart_emulator(f"Citra did not respond after resume: {error}")
+
+    def maybe_suspend_emulator() -> None:
+        nonlocal paused, last_activity_at
+        if idle_suspend_seconds <= 0 or paused or active_job_count:
+            return
+        process = getattr(tts, "emulatorProcess", None)
+        if process is None:
+            return
+        if process.poll() is not None:
+            return
+        if time.time() - last_activity_at < idle_suspend_seconds:
+            return
+        pid = process.pid
+        try:
+            os.kill(pid, signal.SIGSTOP)
+        except ProcessLookupError:
+            return
+        paused = True
+        log_event(f"paused Citra pid={pid} after {round(time.time() - last_activity_at, 2)}s idle")
+        publish_state("paused")
 
     try:
-        tts.startEmulator(spec.rom, spec.lang_id)
-        outbox.put({"type": "ready", "worker": spec.name})
+        start_emulator()
+        outbox.put({"type": "ready", "worker": spec.name, "state": state_payload("ready")})
     except Exception:
         outbox.put({"type": "startup_error", "worker": spec.name, "error": traceback.format_exc()})
 
     while True:
-        message = inbox.get()
+        try:
+            message = inbox.get(timeout=WORKER_QUEUE_POLL_SECONDS)
+        except queue.Empty:
+            maybe_suspend_emulator()
+            continue
+
         if message is None:
             break
 
         job_id = message["job_id"]
         payload = message["payload"]
         started = time.perf_counter()
+        active_job_count += 1
+        last_activity_at = time.time()
         try:
+            resume_emulator()
             voice = VoiceParams.from_mapping(payload["voice"])
             if voice.rom() != spec.rom:
                 raise ValueError(f"Worker {spec.name} cannot render ROM {voice.rom()}")
@@ -98,18 +219,28 @@ def _worker_loop(spec: WorkerSpec, inbox: mp.Queue, outbox: mp.Queue) -> None:
                 )
             if audio is None:
                 raise RuntimeError("Renderer returned no audio")
+            last_error = None
             outbox.put(
                 {
                     "type": "result",
                     "job_id": job_id,
                     "audio": audio,
                     "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+                    "state": state_payload("result"),
                 }
             )
         except Exception:
-            outbox.put({"type": "error", "job_id": job_id, "error": traceback.format_exc()})
+            last_error = traceback.format_exc()
+            outbox.put({"type": "error", "job_id": job_id, "error": last_error, "state": state_payload("error")})
+        finally:
+            active_job_count = max(0, active_job_count - 1)
+            last_render_ms = round((time.perf_counter() - started) * 1000, 2)
+            last_activity_at = time.time()
+            publish_state("idle")
 
     try:
+        if paused and citra_pid() is not None:
+            os.kill(citra_pid(), signal.SIGCONT)
         tts.killEmulator()
     except Exception:
         pass
@@ -128,6 +259,14 @@ class WorkerLane:
         self.last_error: str | None = None
         self.process: mp.Process | None = None
         self.results_thread: threading.Thread | None = None
+        self.citra_pid: int | None = None
+        self.paused = False
+        self.active_job_count = 0
+        self.last_activity_at: float | None = None
+        self.last_render_ms: float | None = None
+        self.resume_count = 0
+        self.worker_restart_count = 0
+        self.process_restart_count = 0
 
     def start(self) -> None:
         with self.lifecycle_lock:
@@ -136,6 +275,13 @@ class WorkerLane:
             self.ready.clear()
             self.startup_failed = False
             self.last_error = None
+            self.citra_pid = None
+            self.paused = False
+            self.active_job_count = 0
+            self.last_activity_at = None
+            self.last_render_ms = None
+            self.resume_count = 0
+            self.worker_restart_count = 0
             self.inbox = mp.Queue()
             self.outbox = mp.Queue()
             self.process = mp.Process(target=_worker_loop, args=(self.spec, self.inbox, self.outbox), daemon=True)
@@ -156,6 +302,7 @@ class WorkerLane:
 
     def restart(self) -> None:
         with self.lifecycle_lock:
+            self.process_restart_count += 1
             self.stop()
             self.start()
 
@@ -208,12 +355,16 @@ class WorkerLane:
 
             message_type = message.get("type")
             if message_type == "ready":
+                self._apply_state(message.get("state"))
                 self.ready.set()
             elif message_type == "startup_error":
                 self.startup_failed = True
                 self.last_error = message["error"]
                 self.ready.set()
+            elif message_type == "state":
+                self._apply_state(message)
             elif message_type in {"result", "error"}:
+                self._apply_state(message.get("state"))
                 job_id = message["job_id"]
                 with self.pending_lock:
                     future = self.pending.pop(job_id, None)
@@ -223,6 +374,28 @@ class WorkerLane:
                     future.set_result(message)
                 else:
                     future.set_exception(RuntimeError(message["error"]))
+
+    def _apply_state(self, state: object) -> None:
+        if not isinstance(state, dict):
+            return
+        if "citra_pid" in state:
+            self.citra_pid = state["citra_pid"] if isinstance(state.get("citra_pid"), int) else None
+        self.paused = bool(state.get("paused", self.paused))
+        self.active_job_count = int(state.get("active_job_count", self.active_job_count) or 0)
+        self.last_activity_at = (
+            float(state["last_activity_at"])
+            if isinstance(state.get("last_activity_at"), (int, float))
+            else self.last_activity_at
+        )
+        self.last_render_ms = (
+            float(state["last_render_ms"])
+            if isinstance(state.get("last_render_ms"), (int, float))
+            else self.last_render_ms
+        )
+        self.resume_count = int(state.get("resume_count", self.resume_count) or 0)
+        self.worker_restart_count = int(state.get("restart_count", self.worker_restart_count) or 0)
+        if state.get("last_error"):
+            self.last_error = str(state["last_error"])
 
     def _fail_pending(self, error: Exception) -> None:
         with self.pending_lock:
@@ -277,8 +450,20 @@ class RendererPool:
                     "rom": lane.spec.rom,
                     "port": lane.spec.port,
                     "pid": lane.process.pid if lane.process else None,
+                    "worker_pid": lane.process.pid if lane.process else None,
+                    "citra_pid": lane.citra_pid,
                     "alive": lane.process.is_alive() if lane.process else False,
                     "ready": lane.ready.is_set(),
+                    "paused": lane.paused,
+                    "active_job_count": lane.active_job_count,
+                    "idle_seconds": (
+                        round(max(0.0, time.time() - lane.last_activity_at), 2)
+                        if lane.last_activity_at is not None
+                        else None
+                    ),
+                    "last_render_ms": lane.last_render_ms,
+                    "resume_count": lane.resume_count,
+                    "restart_count": lane.process_restart_count + lane.worker_restart_count,
                     "last_error": lane.last_error,
                 }
                 for lane in self._lanes()

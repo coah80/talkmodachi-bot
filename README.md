@@ -12,7 +12,7 @@ This fork keeps the original Talkmodachi engine work and turns it into a server 
 - SQLite storage for guild settings and user/guild voice presets.
 - Louder WAV output through a cached per-voice volume parameter.
 - Renderer-hosted voice panel with sliders, built-in presets, test playback, and bounded sample-pack generation.
-- Isolated warm Citra workers with fixed UDP ports, native-resolution software rendering, dummy SDL audio/video, timeout restart, and lower idle CPU in the game patch wait loop.
+- Isolated warm Citra workers with fixed UDP ports, native-resolution software rendering, dummy SDL audio/video, timeout restart, idle suspend/resume, and lower idle CPU in the game patch wait loop.
 - Direct WAV wrapping for raw PCM instead of `pydub`.
 
 ## Local Run
@@ -21,7 +21,7 @@ This fork keeps the original Talkmodachi engine work and turns it into a server 
 2. Put patched ROMs in `roms/`, starting with `roms/US.cxi`.
 3. Run `docker compose up --build`.
 
-The renderer exposes health on the host at `http://127.0.0.1:18080/health` by default. Override `RENDERER_HOST_PORT` if that port is already in use.
+The renderer exposes health on the host at `http://127.0.0.1:18080/health` by default, including Citra PID, paused state, idle seconds, last render timing, resume count, and restart count. Override `RENDERER_HOST_PORT` if that port is already in use.
 
 ## Voice Panel
 
