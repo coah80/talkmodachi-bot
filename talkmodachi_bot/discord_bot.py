@@ -62,16 +62,33 @@ def bot_name_for_message(storage: Storage, message: discord.Message) -> str:
     return message.author.display_name
 
 
-def panel_url_for(guild_id: int, user_id: int) -> str:
+def panel_url_for(
+    guild_id: int,
+    user_id: int,
+    display_name: str | None = None,
+    avatar_url: str | None = None,
+) -> str:
     base_url = os.environ.get("TALKMODACHI_PANEL_URL", "https://tomo.coah80.com").rstrip("/")
-    token = create_panel_token(guild_id=guild_id, user_id=user_id)
+    token = create_panel_token(
+        guild_id=guild_id,
+        user_id=user_id,
+        display_name=display_name,
+        avatar_url=avatar_url,
+    )
     return f"{base_url}/?{urllib.parse.urlencode({'token': token})}"
 
 
 async def send_voice_panel(interaction: discord.Interaction) -> None:
     assert interaction.guild is not None
+    display_name = getattr(interaction.user, "display_name", None) or getattr(interaction.user, "name", "Discord user")
+    avatar_url = str(interaction.user.display_avatar.url) if interaction.user.display_avatar else None
     try:
-        url = panel_url_for(interaction.guild.id, interaction.user.id)
+        url = panel_url_for(
+            interaction.guild.id,
+            interaction.user.id,
+            display_name=display_name,
+            avatar_url=avatar_url,
+        )
     except RuntimeError as error:
         await interaction.response.send_message(str(error), ephemeral=True)
         return

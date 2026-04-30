@@ -15,6 +15,8 @@ class PanelSession:
     guild_id: int
     user_id: int
     expires_at: int
+    display_name: str | None = None
+    avatar_url: str | None = None
 
 
 def panel_signing_key() -> str | None:
@@ -25,7 +27,14 @@ def panel_signing_key() -> str | None:
     )
 
 
-def create_panel_token(*, guild_id: int, user_id: int, ttl_seconds: int = 86400) -> str:
+def create_panel_token(
+    *,
+    guild_id: int,
+    user_id: int,
+    display_name: str | None = None,
+    avatar_url: str | None = None,
+    ttl_seconds: int = 86400,
+) -> str:
     key = panel_signing_key()
     if not key:
         raise RuntimeError("TALKMODACHI_PANEL_SIGNING_KEY is required for voice panel links")
@@ -36,6 +45,10 @@ def create_panel_token(*, guild_id: int, user_id: int, ttl_seconds: int = 86400)
         "user_id": user_id,
         "expires_at": now + ttl_seconds,
     }
+    if display_name:
+        payload["display_name"] = display_name[:100]
+    if avatar_url:
+        payload["avatar_url"] = avatar_url[:500]
     body = _encode_json(payload)
     signature = _sign(body, key)
     return f"{body}.{signature}"
@@ -61,6 +74,8 @@ def parse_panel_token(token: str | None) -> PanelSession:
         guild_id=int(payload["guild_id"]),
         user_id=int(payload["user_id"]),
         expires_at=expires_at,
+        display_name=str(payload["display_name"]) if payload.get("display_name") else None,
+        avatar_url=str(payload["avatar_url"]) if payload.get("avatar_url") else None,
     )
 
 
@@ -69,7 +84,7 @@ def _sign(body: str, key: str) -> str:
     return _b64encode(digest)
 
 
-def _encode_json(payload: dict[str, int]) -> str:
+def _encode_json(payload: dict[str, object]) -> str:
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return _b64encode(raw)
 

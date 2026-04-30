@@ -63,6 +63,13 @@ PANEL_HTML = """<!doctype html>
       gap: 16px;
       margin-bottom: 18px;
     }
+    .header-side {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
     h1 {
       margin: 0;
       font-size: 24px;
@@ -78,6 +85,40 @@ PANEL_HTML = """<!doctype html>
       padding: 0 12px;
       color: var(--muted);
       white-space: nowrap;
+    }
+    .identity {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 44px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px 6px 6px;
+      background: var(--panel);
+    }
+    .identity[hidden] {
+      display: none;
+    }
+    .identity img {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #0f1116;
+    }
+    .identity span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.2;
+    }
+    .identity strong {
+      display: block;
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 14px;
+      line-height: 1.2;
     }
     .layout {
       display: grid;
@@ -227,6 +268,7 @@ PANEL_HTML = """<!doctype html>
     @media (max-width: 860px) {
       main { width: min(100vw - 20px, 720px); padding-top: 14px; }
       header { align-items: flex-start; flex-direction: column; }
+      .header-side { justify-content: flex-start; }
       .layout, .controls, .samples, .preset-grid { grid-template-columns: 1fr; }
       .pack-head { grid-template-columns: 1fr; }
       .status { white-space: normal; }
@@ -237,7 +279,16 @@ PANEL_HTML = """<!doctype html>
   <main>
     <header>
       <h1>Talkmodachi Voice Panel</h1>
-      <div class="status" id="status">ready</div>
+      <div class="header-side">
+        <div class="identity" id="identity" hidden>
+          <img id="identityAvatar" alt="">
+          <div>
+            <span>Customizing for</span>
+            <strong id="identityName"></strong>
+          </div>
+        </div>
+        <div class="status" id="status">ready</div>
+      </div>
     </header>
 
     <div class="layout">
@@ -386,6 +437,21 @@ PANEL_HTML = """<!doctype html>
     function applyVoice(params) {
       state.values = {...state.values, ...params};
       updateControlValues();
+    }
+
+    function renderIdentity() {
+      if (!state.session) {
+        $("identity").hidden = true;
+        return;
+      }
+      $("identityName").textContent = state.session.displayName || `Discord user ${state.session.userId}`;
+      if (state.session.avatarUrl) {
+        $("identityAvatar").src = state.session.avatarUrl;
+        $("identityAvatar").hidden = false;
+      } else {
+        $("identityAvatar").hidden = true;
+      }
+      $("identity").hidden = false;
     }
 
     async function renderVoice(params, label) {
@@ -539,6 +605,7 @@ PANEL_HTML = """<!doctype html>
         if (sessionResponse.ok) {
           state.session = await sessionResponse.json();
           applyVoice(state.session.voice);
+          renderIdentity();
           finalStatus = "linked";
         } else {
           finalStatus = "invalid panel link";

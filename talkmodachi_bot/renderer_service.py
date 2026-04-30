@@ -98,6 +98,8 @@ async def session(request: Request) -> dict[str, object]:
     return {
         "guildId": panel_session.guild_id,
         "userId": panel_session.user_id,
+        "displayName": panel_session.display_name,
+        "avatarUrl": panel_session.avatar_url,
         "voiceId": effective_voice_id,
         "voice": voice.to_dict(),
         "expiresAt": panel_session.expires_at,
