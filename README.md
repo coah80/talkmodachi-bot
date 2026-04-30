@@ -25,7 +25,7 @@ The renderer exposes health on the host at `http://127.0.0.1:18080/health` by de
 
 ## Voice Panel
 
-The renderer serves a voice panel at `/`. Set `TALKMODACHI_PUBLIC_HOSTS=tomo.coah80.com` and `TALKMODACHI_PANEL_SIGNING_KEY` when exposing it publicly. `/voice` sends a private signed link for that Discord user; clicking Save in the panel writes the `panel` voice preset and selects it for that user. Add `TALKMODACHI_PANEL_TOKEN` if you also want public `/render` and `/api/config` requests locked down while internal Docker calls from the Discord bot stay token-free.
+The renderer serves a voice panel at `/`. Set `TALKMODACHI_PUBLIC_HOSTS=tomo.coah80.com` and `TALKMODACHI_PANEL_SIGNING_KEY` when exposing it publicly. `/voice` sends a private signed link for that Discord user; clicking Save in the panel writes the global per-user `panel` voice preset and selects it for that user across servers. Add `TALKMODACHI_PANEL_TOKEN` if you also want public `/render` and `/api/config` requests locked down while internal Docker calls from the Discord bot stay token-free.
 
 The panel includes sliders for `pitch`, `speed`, `quality`, `tone`, `accent`, `intonation`, `lang`, and `volume`. The sample-pack button renders a capped preset/matrix set, and `TALKMODACHI_CACHE_MAX_BYTES` bounds the WAV cache.
 

@@ -258,7 +258,11 @@ class TalkmodachiBot(discord.Client):
             return
         text = text[: settings.max_message_length]
 
-        voice_id = self.storage.get_user_default(message.guild.id, message.author.id) or settings.default_voice_id
+        voice_id = (
+            self.storage.get_user_default(message.guild.id, message.author.id)
+            or self.storage.get_global_user_default(message.author.id)
+            or settings.default_voice_id
+        )
         voice = self.storage.resolve_voice(voice_id, message.guild.id, message.author.id)
         queued = await player.enqueue(text, voice, message.channel)
         if not queued:

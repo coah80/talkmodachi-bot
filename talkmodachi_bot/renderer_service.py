@@ -91,7 +91,10 @@ async def config(request: Request) -> dict[str, object]:
 async def session(request: Request) -> dict[str, object]:
     panel_session = require_panel_session(request)
     store = storage_for()
-    voice_id = store.get_user_default(panel_session.guild_id, panel_session.user_id)
+    voice_id = store.get_global_user_default(panel_session.user_id) or store.get_user_default(
+        panel_session.guild_id,
+        panel_session.user_id,
+    )
     settings = store.get_guild_settings(panel_session.guild_id)
     effective_voice_id = voice_id or settings.default_voice_id
     voice = store.resolve_voice(effective_voice_id, panel_session.guild_id, panel_session.user_id)
@@ -116,14 +119,12 @@ async def save_voice(request: Request, payload: SaveVoiceRequest) -> dict[str, o
 
     store = storage_for()
     voice_id = "panel"
-    store.save_voice(
+    store.save_global_user_voice(
+        user_id=panel_session.user_id,
         voice_id=voice_id,
         name="Panel voice",
         voice=voice,
-        guild_id=panel_session.guild_id,
-        owner_user_id=panel_session.user_id,
     )
-    store.set_user_default(panel_session.guild_id, panel_session.user_id, voice_id)
     return {
         "ok": True,
         "voiceId": voice_id,

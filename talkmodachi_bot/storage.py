@@ -106,6 +106,14 @@ class Storage:
                 )
                 """
             )
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS global_user_settings (
+                    user_id INTEGER PRIMARY KEY,
+                    default_voice_id TEXT
+                )
+                """
+            )
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         columns = {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")}
@@ -185,11 +193,37 @@ class Storage:
     ) -> None:
         with self.lock, self.conn:
             self.conn.execute(
+                "DELETE FROM voice_presets WHERE id = ? AND guild_id IS ? AND owner_user_id IS ?",
+                (voice_id, guild_id, owner_user_id),
+            )
+            self.conn.execute(
                 """
-                INSERT OR REPLACE INTO voice_presets(id, guild_id, owner_user_id, name, params_json, created_at)
+                INSERT INTO voice_presets(id, guild_id, owner_user_id, name, params_json, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (voice_id, guild_id, owner_user_id, name, json.dumps(voice.to_dict()), int(time.time())),
+            )
+
+    def save_global_user_voice(self, *, user_id: int, voice_id: str, name: str, voice: VoiceParams) -> None:
+        with self.lock, self.conn:
+            self.conn.execute(
+                "DELETE FROM voice_presets WHERE id = ? AND owner_user_id = ?",
+                (voice_id, user_id),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO voice_presets(id, guild_id, owner_user_id, name, params_json, created_at)
+                VALUES (?, NULL, ?, ?, ?, ?)
+                """,
+                (voice_id, user_id, name, json.dumps(voice.to_dict()), int(time.time())),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO global_user_settings(user_id, default_voice_id)
+                VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET default_voice_id = excluded.default_voice_id
+                """,
+                (user_id, voice_id),
             )
 
     def delete_voice(self, *, voice_id: str, guild_id: int | None, owner_user_id: int | None) -> bool:
@@ -219,6 +253,25 @@ class Storage:
             ).fetchone()
             return None if row is None else row["default_voice_id"]
 
+    def set_global_user_default(self, user_id: int, voice_id: str | None) -> None:
+        with self.lock, self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO global_user_settings(user_id, default_voice_id)
+                VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET default_voice_id = excluded.default_voice_id
+                """,
+                (user_id, voice_id),
+            )
+
+    def get_global_user_default(self, user_id: int) -> str | None:
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT default_voice_id FROM global_user_settings WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+            return None if row is None else row["default_voice_id"]
+
     def resolve_voice(self, voice_id: str | None, guild_id: int | None = None, user_id: int | None = None) -> VoiceParams:
         voice_id = voice_id or "adultf"
         if voice_id in BUILTIN_VOICES:
@@ -232,10 +285,13 @@ class Storage:
                     OR (owner_user_id IS NULL AND guild_id = ?)
                     OR (owner_user_id = ? AND guild_id IS NULL)
                 )
-                ORDER BY owner_user_id IS NOT NULL DESC, guild_id IS NOT NULL DESC
+                ORDER BY
+                    (owner_user_id = ? AND guild_id = ?) DESC,
+                    (owner_user_id = ? AND guild_id IS NULL) DESC,
+                    (owner_user_id IS NULL AND guild_id = ?) DESC
                 LIMIT 1
                 """,
-                (voice_id, user_id, guild_id, guild_id, user_id),
+                (voice_id, user_id, guild_id, guild_id, user_id, user_id, guild_id, user_id, guild_id),
             ).fetchone()
         if row is None:
             return BUILTIN_VOICES["adultf"]
